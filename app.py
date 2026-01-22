@@ -17,7 +17,7 @@ if 'backend' not in st.session_state:
     st.session_state.backend = IrigasiBackend()
 app = st.session_state.backend
 
-# --- FUNGSI PETA GIS (DIKEMBALIKAN) ---
+# --- FUNGSI PETA GIS ---
 def parse_kml_to_map(kml_file):
     m = folium.Map(location=[-4.5, 103.0], zoom_start=12)
     try:
@@ -45,7 +45,7 @@ def parse_kml_to_map(kml_file):
         return m, f"Memuat {count} aset."
     except Exception as e: return m, f"Gagal: {e}"
 
-# --- FUNGSI GAMBAR SKETSA (DIKEMBALIKAN) ---
+# --- FUNGSI GAMBAR SKETSA ---
 def gambar_sketsa(jenis, params):
     fig, ax = plt.subplots(figsize=(6, 3))
     ax.set_axis_off()
@@ -67,7 +67,7 @@ def gambar_sketsa(jenis, params):
         ax.text(0.5, 0.5, "Visualisasi belum tersedia", ha='center')
     return fig
 
-# --- SIDEBAR: JSON & RESET (DIKEMBALIKAN) ---
+# --- SIDEBAR: JSON & RESET ---
 st.sidebar.divider()
 with st.sidebar.expander("🛠️ Menu Teknisi (Reset & Backup)"):
     if st.button("⚠️ RESET SEMUA DATA"):
@@ -112,7 +112,7 @@ if menu == "Dashboard":
             baik = len(df) - rusak
             st.write(pd.DataFrame({'Kondisi': ['Baik/RR', 'Rusak Berat'], 'Jumlah': [baik, rusak]}).set_index('Kondisi'))
 
-# --- INPUT ASET FISIK ---
+# --- INPUT ASET FISIK (DENGAN UPLOAD KMZ) ---
 elif menu == "Input Aset Fisik":
     st.header("📝 Input Data Prasarana Fisik")
     t1, t2 = st.tabs(["Formulir Detail", "Data Tabel"])
@@ -121,15 +121,20 @@ elif menu == "Input Aset Fisik":
         with c1:
             jenis = st.selectbox("Jenis:", ["Saluran (Primer/Sekunder)", "Bendung", "Bangunan Bagi", "Lainnya"])
             nama = st.text_input("Nama Aset")
+            
+            # --- FITUR DIKEMBALIKAN: UPLOAD PETA DI FORM ---
+            file_peta = st.file_uploader("Upload Peta (KMZ/KML) - Opsional", type=["kmz", "kml"])
+            # -----------------------------------------------
+            
             detail = {}
             if "Saluran" in jenis:
-                b = st.number_input("Lebar (b)", 1.0)
-                h = st.number_input("Tinggi (h)", 1.0)
-                m = st.number_input("Miring (m)", 1.0)
+                b = st.number_input("Lebar Dasar (b)", min_value=0.0, value=1.0, step=0.05, format="%.2f")
+                h = st.number_input("Tinggi Jagaan (h)", min_value=0.0, value=1.0, step=0.05, format="%.2f")
+                m = st.number_input("Kemiringan (m)", min_value=0.0, value=1.0, step=0.05, format="%.2f")
                 detail = {"b":b, "h":h, "m":m, "tipe_lining": st.selectbox("Lining", ["Tanah","Beton"])}
                 sat = "m"
             elif "Bendung" in jenis:
-                H = st.number_input("Tinggi Mercu", 2.0)
+                H = st.number_input("Tinggi Mercu (m)", min_value=0.0, value=2.0, step=0.05, format="%.2f")
                 detail = {"tinggi_mercu":H}
                 sat = "bh"
             else: sat = "unit"
@@ -139,7 +144,10 @@ elif menu == "Input Aset Fisik":
             cb = st.number_input("Baik", min_value=0.0)
             crr = st.number_input("RR", min_value=0.0)
             crb = st.number_input("RB", min_value=0.0)
-            if st.button("Simpan Fisik"): st.success(app.tambah_data_kompleks(nama, jenis, sat, cb, crr, crb, detail))
+            
+            if st.button("Simpan Fisik"): 
+                # Kirim file_peta ke backend
+                st.success(app.tambah_data_kompleks(nama, jenis, sat, cb, crr, crb, detail, file_kmz=file_peta))
     with t2:
         df = app.get_data()
         ed = st.data_editor(df, hide_index=True, use_container_width=True)
@@ -181,7 +189,7 @@ elif menu == "Input Data Non-Fisik":
             if st.form_submit_button("Simpan SDM"): st.success(app.tambah_sdm_sarana(jns, nm, cond, "-"))
         st.data_editor(app.get_table_data('data_sdm_sarana'), key='ed_sdm', num_rows="dynamic")
 
-# --- PETA GIS (DIKEMBALIKAN) ---
+# --- PETA GIS ---
 elif menu == "Peta Digital (GIS)":
     st.header("🗺️ Peta Jaringan Irigasi")
     up = st.file_uploader("Upload File KML/KMZ", type=["kml"])
@@ -192,7 +200,7 @@ elif menu == "Peta Digital (GIS)":
     else:
         st_folium(folium.Map([-4.5, 103.0], zoom_start=9), width=1000, height=500)
 
-# --- ANALISA & EXPORT (DIKEMBALIKAN) ---
+# --- ANALISA & EXPORT ---
 elif menu == "Analisa & Export":
     st.header("Analisa & Laporan")
     df = app.get_data()
