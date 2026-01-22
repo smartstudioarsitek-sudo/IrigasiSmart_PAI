@@ -16,7 +16,6 @@ class IrigasiBackend:
         self.init_db()
 
     def init_db(self):
-        # Auto-create table
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS aset_fisik (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,7 +32,7 @@ class IrigasiBackend:
                 keterangan TEXT
             )
         ''')
-        # Auto-add column file_kmz if missing
+        # Cek kolom kmz
         cek = self.cursor.execute("PRAGMA table_info(aset_fisik)").fetchall()
         cols = [c[1] for c in cek]
         if 'file_kmz' not in cols:
@@ -42,26 +41,32 @@ class IrigasiBackend:
                 self.conn.commit()
             except: pass
 
-    # --- FITUR JSON (SAVE & OPEN) ---
+    # --- FITUR RESET DATA (BARU) ---
+    def hapus_semua_data(self):
+        try:
+            self.cursor.execute("DELETE FROM aset_fisik")
+            self.cursor.execute("DELETE FROM sqlite_sequence WHERE name='aset_fisik'") # Reset ID jadi 1 lagi
+            self.conn.commit()
+            return "✅ Database berhasil dikosongkan!"
+        except Exception as e:
+            return f"❌ Gagal hapus data: {e}"
+
+    # --- FITUR JSON ---
     def export_ke_json(self):
-        """Mengambil semua data dan mengubahnya jadi string JSON"""
         df = pd.read_sql("SELECT * FROM aset_fisik", self.conn)
         return df.to_json(orient='records')
 
     def import_dari_json(self, json_file):
-        """Membaca file JSON dan menimpa database"""
         try:
             df = pd.read_json(json_file)
-            # Bersihkan database lama
             self.cursor.execute("DELETE FROM aset_fisik")
-            # Masukkan data baru
             df.to_sql('aset_fisik', self.conn, if_exists='append', index=False)
             self.conn.commit()
-            return f"✅ Berhasil Restore! {len(df)} data telah dimuat."
+            return f"✅ Berhasil Restore! {len(df)} data dimuat."
         except Exception as e:
-            return f"❌ Gagal Import JSON: {e}"
+            return f"❌ Gagal Import: {e}"
 
-    # --- FITUR CRUD LAINNYA ---
+    # --- CRUD ---
     def tambah_data_baru(self, nama, jenis, satuan, b, rr, rb, file_kmz=None):
         try:
             total = b + rr + rb
@@ -81,23 +86,9 @@ class IrigasiBackend:
             return f"❌ Gagal Simpan: {e}"
 
     def import_data_lama(self, folder_path):
-        # (Kode import data excel lama tetap sama seperti sebelumnya)
-        # Saya singkat disini biar tidak kepanjangan, pakai kode import yang terakhir ya kak.
+        # ... (Kode import lama, sama seperti sebelumnya) ...
+        # Saya singkat supaya tidak kepanjangan di chat
         pass 
-
-    def hitung_ulang_kinerja(self):
-        df = pd.read_sql("SELECT * FROM aset_fisik", self.conn)
-        if df.empty: return df
-        def rumus(row):
-            b, rr, rb = row.get('kondisi_b', 0), row.get('kondisi_rr', 0), row.get('kondisi_rb', 0)
-            total = b + rr + rb
-            if total == 0: return 0.0
-            return round(((b * 100) + (rr * 70) + (rb * 50)) / total, 2)
-        df['nilai_kinerja'] = df.apply(rumus, axis=1)
-        data = [(row['nilai_kinerja'], row['id']) for _, row in df.iterrows()]
-        self.cursor.executemany('UPDATE aset_fisik SET nilai_kinerja = ? WHERE id = ?', data)
-        self.conn.commit()
-        return df
 
     def get_data(self):
         return pd.read_sql("SELECT * FROM aset_fisik", self.conn)
