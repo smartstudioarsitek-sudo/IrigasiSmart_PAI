@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import altair as alt  # Library Grafik Bagus
 from modules.backend import IrigasiBackend
 import io
 import folium
@@ -13,174 +14,174 @@ if 'backend' not in st.session_state:
     st.session_state.backend = IrigasiBackend()
 app = st.session_state.backend
 
-# --- FUNGSI BANTUAN GIS (PETA) ---
+# --- FUNGSI PETA ---
 def parse_kml_to_map(kml_file):
-    """Membaca file KML dan menggambarnya di Peta Folium"""
-    m = folium.Map(location=[-4.5, 103.0], zoom_start=12) # Lokasi default (Sumatra/Lampung kira2)
-    
+    m = folium.Map(location=[-4.5, 103.0], zoom_start=12)
     try:
-        # Baca konten file
         kml_content = kml_file.getvalue().decode("utf-8")
         root = ET.fromstring(kml_content)
-        
-        # Namespace KML biasanya ribet, kita handle basicnya
         namespace = {'kml': 'http://www.opengis.net/kml/2.2'}
-        
         count = 0
-        # Cari Placemark (Titik/Garis/Area)
         for placemark in root.findall('.//kml:Placemark', namespace):
             name = placemark.find('kml:name', namespace)
-            name_text = name.text if name is not None else "Aset Tanpa Nama"
+            name_text = name.text if name is not None else "Aset"
             
-            # Coba cari Polygon
-            polygon = placemark.find('.//kml:Polygon', namespace)
-            linestring = placemark.find('.//kml:LineString', namespace)
-            point = placemark.find('.//kml:Point', namespace)
-            
-            if polygon is not None:
-                # Ambil koordinat
-                coords_text = polygon.find('.//kml:coordinates', namespace).text
-                # Parsing teks koordinat "lon,lat,alt lon,lat,alt ..."
-                coords = []
-                for c in coords_text.strip().split():
-                    lon, lat, _ = map(float, c.split(','))
-                    coords.append([lat, lon]) # Folium butuh [Lat, Lon]
-                
-                folium.Polygon(
-                    locations=coords,
-                    color="blue",
-                    fill=True,
-                    fill_opacity=0.4,
-                    popup=name_text,
-                    tooltip=name_text
-                ).add_to(m)
-                count += 1
-                
-            elif linestring is not None:
-                coords_text = linestring.find('.//kml:coordinates', namespace).text
-                coords = []
-                for c in coords_text.strip().split():
-                    lon, lat, _ = map(float, c.split(','))
-                    coords.append([lat, lon])
-                
-                folium.PolyLine(
-                    locations=coords,
-                    color="red",
-                    weight=4,
-                    popup=name_text,
-                    tooltip=name_text
-                ).add_to(m)
-                count += 1
-
-        return m, f"Berhasil memuat {count} aset irigasi dari KML!"
-        
+            # Simple Geometry Parser
+            for geom in ['Polygon', 'LineString', 'Point']:
+                obj = placemark.find(f'.//kml:{geom}', namespace)
+                if obj:
+                    coords_text = obj.find('.//kml:coordinates', namespace).text
+                    coords = []
+                    for c in coords_text.strip().split():
+                        lon, lat, *_ = map(float, c.split(','))
+                        coords.append([lat, lon])
+                    
+                    if geom == 'Polygon':
+                        folium.Polygon(coords, color="blue", fill=True, popup=name_text).add_to(m)
+                    elif geom == 'LineString':
+                        folium.PolyLine(coords, color="red", weight=4, popup=name_text).add_to(m)
+                    elif geom == 'Point':
+                        folium.Marker(coords[0], popup=name_text).add_to(m)
+                    count += 1
+        return m, f"Memuat {count} aset."
     except Exception as e:
-        return m, f"Gagal baca KML: {e}"
+        return m, f"Gagal baca: {e}"
 
-# --- SIDEBAR: BACKUP & RESTORE (JSON) ---
+# --- SIDEBAR: MENU TEKNISI (RESET) ---
 st.sidebar.divider()
-st.sidebar.header("💾 Backup Data (JSON)")
-# Tombol Save
-json_data = app.export_ke_json()
-st.sidebar.download_button(
-    label="⬇️ Save File (Download JSON)",
-    data=json_data,
-    file_name="backup_irigasi.json",
-    mime="application/json",
-    help="Klik ini untuk menyimpan data ke komputer Kakak."
-)
+with st.sidebar.expander("🛠️ Menu Teknisi (Reset)"):
+    st.warning("Zona Berbahaya!")
+    if st.button("⚠️ HAPUS SEMUA DATA (RESET)"):
+        pesan = app.hapus_semua_data()
+        st.success(pesan)
+        st.rerun()
 
-# Tombol Open
-uploaded_json = st.sidebar.file_uploader("⬆️ Open File (Restore JSON)", type=["json"])
-if uploaded_json is not None:
-    if st.sidebar.button("Jalankan Restore"):
-        pesan = app.import_dari_json(uploaded_json)
-        if "Berhasil" in pesan:
-            st.sidebar.success(pesan)
-            st.rerun()
-        else:
-            st.sidebar.error(pesan)
+# --- SIDEBAR: BACKUP ---
+json_data = app.export_ke_json()
+st.sidebar.download_button("⬇️ Backup JSON", json_data, "backup.json", "application/json")
+uploaded_json = st.sidebar.file_uploader("⬆️ Restore JSON", type=["json"])
+if uploaded_json and st.sidebar.button("Restore Sekarang"):
+    app.import_dari_json(uploaded_json)
+    st.rerun()
 
 # --- MENU UTAMA ---
 menu = st.sidebar.radio("Menu Navigasi", ["Dashboard", "Input Data", "Peta Digital (GIS)", "Analisa Kinerja", "Export Laporan"])
 
-# --- DASHBOARD ---
+# --- DASHBOARD GRAFIK BAGUS ---
 if menu == "Dashboard":
-    st.header("Ringkasan Daerah Irigasi")
+    st.header("Dashboard Kinerja Irigasi")
     df = app.get_data()
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Aset", f"{len(df)} Unit")
-    col2.metric("Rata-rata Kinerja", f"{df['nilai_kinerja'].mean() if not df.empty else 0:.2f}%")
-    col3.metric("Rusak Berat", f"{len(df[df['nilai_kinerja'] < 60]) if not df.empty else 0} Unit")
+    
+    # Metrik Utama
+    c1, c2, c3, c4 = st.columns(4)
+    total = len(df)
+    rata = df['nilai_kinerja'].mean() if not df.empty else 0
+    baik = len(df[df['nilai_kinerja'] >= 80])
+    rusak = len(df[df['nilai_kinerja'] < 60])
+    
+    c1.metric("Total Aset", f"{total} Unit")
+    c2.metric("Rata-rata Kinerja", f"{rata:.1f}%")
+    c3.metric("Kondisi Baik", f"{baik} Unit", delta="Aman")
+    c4.metric("Rusak Berat", f"{rusak} Unit", delta_color="inverse", delta=f"-{rusak}")
+
+    st.divider()
+
+    if not df.empty:
+        col_grafik1, col_grafik2 = st.columns(2)
+        
+        with col_grafik1:
+            st.subheader("📊 Rata-rata Kinerja per Jenis")
+            # Grafik Batang Horizontal (Bar Chart)
+            chart_bar = alt.Chart(df).mark_bar().encode(
+                x=alt.X('mean(nilai_kinerja)', title='Nilai Kinerja (%)'),
+                y=alt.Y('jenis_aset', sort='-x', title='Jenis Aset'),
+                color=alt.Color('mean(nilai_kinerja)', scale=alt.Scale(scheme='greens'), legend=None),
+                tooltip=['jenis_aset', 'mean(nilai_kinerja)']
+            ).interactive()
+            st.altair_chart(chart_bar, use_container_width=True)
+
+        with col_grafik2:
+            st.subheader("🍩 Komposisi Kondisi Aset")
+            # Kategorisasi Data untuk Donut Chart
+            def kategori(n):
+                if n >= 80: return 'Baik'
+                elif n >= 60: return 'Rusak Ringan'
+                else: return 'Rusak Berat'
+            
+            df['Status'] = df['nilai_kinerja'].apply(kategori)
+            df_pie = df['Status'].value_counts().reset_index()
+            df_pie.columns = ['Status', 'Jumlah']
+            
+            # Grafik Donut
+            base = alt.Chart(df_pie).encode(theta=alt.Theta("Jumlah", stack=True))
+            pie = base.mark_arc(outerRadius=120, innerRadius=60).encode(
+                color=alt.Color("Status", scale=alt.Scale(domain=['Baik', 'Rusak Ringan', 'Rusak Berat'], range=['#2ecc71', '#f1c40f', '#e74c3c'])),
+                order=alt.Order("Jumlah", sort="descending"),
+                tooltip=["Status", "Jumlah"]
+            )
+            text = base.mark_text(radius=140).encode(
+                text="Jumlah",
+                order=alt.Order("Jumlah", sort="descending"),
+                color=alt.value("black") 
+            )
+            st.altair_chart(pie + text, use_container_width=True)
+            
+    else:
+        st.info("Belum ada data untuk ditampilkan grafiknya.")
 
 # --- INPUT DATA ---
 elif menu == "Input Data":
-    st.header("Manajemen Data Aset")
-    tab1, tab2 = st.tabs(["📝 Tambah Manual", "📊 Edit Tabel"])
-    
-    with tab1:
-        with st.form("form_tambah"):
-            c1, c2 = st.columns(2)
+    st.header("Input Data Inventaris")
+    t1, t2 = st.tabs(["📝 Form Input", "✏️ Edit Tabel"])
+    with t1:
+        with st.form("add"):
+            c1,c2 = st.columns(2)
             with c1:
-                nama = st.text_input("Nama Aset")
-                jenis = st.selectbox("Jenis", ["Saluran Primer", "Saluran Sekunder", "Bendung", "Bangunan Bagi", "Sawah"])
-                kmz = st.file_uploader("Upload KMZ/KML (Untuk Database)", type=['kml', 'kmz'])
+                nm = st.text_input("Nama Aset")
+                jn = st.selectbox("Jenis", ["Saluran Primer", "Saluran Sekunder", "Bendung", "Bangunan Bagi", "Sawah"])
+                kmz = st.file_uploader("Upload Peta (KMZ)", type=['kml','kmz'])
             with c2:
-                satuan = st.selectbox("Satuan", ["m", "bh", "unit", "ha"])
-                b = st.number_input("Kondisi Baik", min_value=0.0)
+                sat = st.selectbox("Satuan", ["m", "bh", "unit"])
+                b = st.number_input("Baik", min_value=0.0)
                 rr = st.number_input("Rusak Ringan", min_value=0.0)
                 rb = st.number_input("Rusak Berat", min_value=0.0)
-            
             if st.form_submit_button("Simpan"):
-                msg = app.tambah_data_baru(nama, jenis, satuan, b, rr, rb, kmz)
-                st.success(msg)
-    
-    with tab2:
+                st.success(app.tambah_data_baru(nm, jn, sat, b, rr, rb, kmz))
+    with t2:
         df = app.get_data()
-        edited = st.data_editor(df, num_rows="dynamic", hide_index=True, use_container_width=True)
-        if st.button("Simpan Tabel"):
-            app.update_data(edited)
-            st.success("Tersimpan!")
+        ed = st.data_editor(df, hide_index=True, use_container_width=True)
+        if st.button("Update Tabel"):
+            app.update_data(ed)
             st.rerun()
 
-# --- PETA DIGITAL (GIS) ---
+# --- PETA ---
 elif menu == "Peta Digital (GIS)":
-    st.header("🗺️ Peta Jaringan Irigasi")
-    st.info("Upload file KML/KMZ untuk melihat jaringan irigasi di peta.")
-    
-    file_peta = st.file_uploader("Pilih File KML", type=["kml"])
-    
-    if file_peta:
-        peta, pesan = parse_kml_to_map(file_peta)
-        if "Berhasil" in pesan:
-            st.success(pesan)
-            # Tampilkan Peta Full Width
-            st_folium(peta, width=1000, height=500)
-        else:
-            st.error(pesan)
+    st.header("Peta Jaringan Irigasi")
+    up = st.file_uploader("Upload KML", type=["kml"])
+    if up:
+        m, msg = parse_kml_to_map(up)
+        st.success(msg)
+        st_folium(m, width=1000, height=500)
     else:
-        # Peta Kosong Default
-        m_default = folium.Map(location=[-4.5, 103.0], zoom_start=9)
-        st_folium(m_default, width=1000, height=500)
+        st_folium(folium.Map([-4.5, 103.0], zoom_start=9), width=1000, height=500)
 
 # --- ANALISA ---
 elif menu == "Analisa Kinerja":
-    st.header("Prioritas Penanganan")
+    st.header("Analisa Prioritas")
     df = app.get_data()
     if not df.empty:
-        rusak = df[df['nilai_kinerja'] < 60]
-        if not rusak.empty:
-            st.error(f"Ada {len(rusak)} aset Rusak Berat!")
-            st.dataframe(rusak)
+        df_rb = df[df['nilai_kinerja'] < 60]
+        if not df_rb.empty:
+            st.error(f"Perhatian: {len(df_rb)} Aset Rusak Berat!")
+            st.dataframe(df_rb)
         else:
-            st.success("Semua aset Kondisi Aman.")
+            st.success("Semua aset dalam kondisi baik.")
 
 # --- EXPORT ---
 elif menu == "Export Laporan":
-    st.header("Download Laporan Excel")
-    if st.button("Download"):
+    if st.button("Download Excel"):
         df = app.get_data()
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            df.to_excel(writer, index=False)
-        st.download_button("Klik Download", buffer, "Laporan_SIKI.xlsx")
+        b = io.BytesIO()
+        with pd.ExcelWriter(b, engine='xlsxwriter') as w:
+            df.to_excel(w, index=False)
+        st.download_button("Download", b, "Laporan.xlsx")
