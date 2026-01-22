@@ -4,3 +4,6 @@ openpyxl
 xlsxwriter
 streamlit-folium
 folium
+matplotlib
+altair
+
