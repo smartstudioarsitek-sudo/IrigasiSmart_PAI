@@ -2,3 +2,5 @@ streamlit
 pandas
 openpyxl
 xlsxwriter
+streamlit-folium
+folium
