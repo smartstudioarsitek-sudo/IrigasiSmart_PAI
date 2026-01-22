@@ -4,10 +4,6 @@ import os
 
 class IrigasiBackend:
     def __init__(self, db_path='database/irigasi.db'):
-        """
-        Inisialisasi koneksi database.
-        Otomatis membuat folder 'database' jika belum ada.
-        """
         self.db_folder = os.path.dirname(db_path)
         if self.db_folder and not os.path.exists(self.db_folder):
             try:
@@ -19,7 +15,10 @@ class IrigasiBackend:
         self.init_db()
 
     def init_db(self):
-        """Membuat tabel database dengan kolom tambahan untuk KMZ"""
+        """
+        Membuat tabel dan OTOMATIS MEMPERBAIKI jika ada kolom yang kurang (Auto-Migration).
+        """
+        # 1. Buat tabel dasar jika belum ada
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS aset_fisik (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -32,23 +31,31 @@ class IrigasiBackend:
                 kondisi_rr REAL DEFAULT 0,
                 kondisi_rb REAL DEFAULT 0,
                 nilai_kinerja REAL DEFAULT 0,
-                file_kmz TEXT,
                 keterangan TEXT
             )
         ''')
-        self.conn.commit()
+        
+        # 2. Cek apakah kolom 'file_kmz' sudah ada?
+        # Ini solusi untuk error "no column named file_kmz"
+        cek_kolom = self.cursor.execute("PRAGMA table_info(aset_fisik)").fetchall()
+        list_kolom = [kol[1] for kol in cek_kolom]
+        
+        if 'file_kmz' not in list_kolom:
+            print("⚙️ Sedang memperbarui database: Menambahkan kolom file_kmz...")
+            try:
+                self.cursor.execute("ALTER TABLE aset_fisik ADD COLUMN file_kmz TEXT")
+                self.conn.commit()
+            except Exception as e:
+                print(f"Gagal tambah kolom: {e}")
 
-    # --- FITUR BARU: TAMBAH DATA MANUAL (YANG TADI ERROR) ---
     def tambah_data_baru(self, nama, jenis, satuan, b, rr, rb, file_kmz=None):
         try:
-            # Hitung kinerja otomatis saat input
-            # Rumus: (Baik*100 + RR*70 + RB*50) / Total
             total = b + rr + rb
             nilai = 0
             if total > 0:
                 nilai = ((b * 100) + (rr * 70) + (rb * 50)) / total
             
-            # Ambil nama file KMZ jika ada upload
+            # Ambil nama file saja (saat ini fitur baru sebatas simpan file)
             kmz_name = file_kmz.name if file_kmz else "-"
 
             self.cursor.execute('''
@@ -62,10 +69,8 @@ class IrigasiBackend:
             return f"❌ Gagal Simpan: {e}"
 
     def import_data_lama(self, folder_path):
-        """
-        Import data dari file Excel lama (Legacy Support)
-        """
         if not os.path.exists(folder_path):
+            # Fallback check
             current_dir = os.getcwd()
             alt_path = os.path.join(current_dir, folder_path)
             if os.path.exists(alt_path):
@@ -78,21 +83,21 @@ class IrigasiBackend:
         
         for file in files:
             if not (file.endswith('.csv') or file.endswith('.xls')): continue
-            
             file_path = os.path.join(folder_path, file)
+            
+            # Deteksi jenis sederhana
             jenis = "Umum"
             if "bendung" in file.lower(): jenis = "Bendung"
             elif "saluran" in file.lower(): jenis = "Saluran"
 
             try:
-                # Coba baca CSV (separator titik koma)
                 df = pd.read_csv(file_path, sep=';', on_bad_lines='skip', skiprows=0, header=None, engine='python')
                 for _, row in df.iterrows():
                     if len(row) > 2:
                         kode = str(row[1]).strip()
                         nama = str(row[2]).strip()
                         if len(kode) > 3 and nama.lower() != 'nan':
-                             # Cek duplikat
+                            # Cek duplikat
                             cek = self.cursor.execute("SELECT id FROM aset_fisik WHERE kode_aset = ?", (kode,)).fetchone()
                             if not cek:
                                 self.cursor.execute('''
@@ -106,7 +111,6 @@ class IrigasiBackend:
         return f"✅ Import Selesai. {count} aset baru ditambahkan."
 
     def hitung_ulang_kinerja(self):
-        """Hitung ulang semua nilai kinerja di database"""
         df = pd.read_sql("SELECT * FROM aset_fisik", self.conn)
         if df.empty: return df
 
@@ -120,7 +124,6 @@ class IrigasiBackend:
 
         df['nilai_kinerja'] = df.apply(rumus, axis=1)
         
-        # Update ke DB
         data = [(row['nilai_kinerja'], row['id']) for _, row in df.iterrows()]
         self.cursor.executemany('UPDATE aset_fisik SET nilai_kinerja = ? WHERE id = ?', data)
         self.conn.commit()
