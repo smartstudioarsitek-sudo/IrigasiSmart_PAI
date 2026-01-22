@@ -9,8 +9,8 @@ import xml.etree.ElementTree as ET
 import io
 from modules.backend import IrigasiBackend
 
-st.set_page_config(page_title="SIKI - Standar Permen 23/2015", layout="wide")
-st.title("🌊 SIKI (Sistem Informasi Kinerja Irigasi)")
+st.set_page_config(page_title="IKSI - Standar Permen 23/2015", layout="wide")
+st.title("🌊 IKSI (Sistem Informasi Kinerja Irigasi)")
 st.caption("✅ Compliant with Permen PUPR 23/2015 | Feeder System for EPAKSI")
 
 if 'backend' not in st.session_state:
@@ -204,3 +204,4 @@ elif menu == "Laporan":
             app.get_table_data('data_p3a').to_excel(w, sheet_name='P3A', index=False)
             app.get_table_data('data_sdm_sarana').to_excel(w, sheet_name='SDM', index=False)
         st.download_button("Download", b, "Laporan_SIKI.xlsx")
+
