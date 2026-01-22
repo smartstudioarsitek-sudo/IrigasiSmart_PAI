@@ -4,12 +4,8 @@ import altair as alt
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from modules.backend import IrigasiBackend
-import io
-import json
-import folium
-from streamlit_folium import st_folium
-import xml.etree.ElementTree as ET
 
+# Config
 st.set_page_config(page_title="SIKI - Sistem Irigasi", layout="wide")
 st.title("🌊 Sistem Informasi Kinerja Irigasi (SIKI)")
 
@@ -17,147 +13,158 @@ if 'backend' not in st.session_state:
     st.session_state.backend = IrigasiBackend()
 app = st.session_state.backend
 
-# --- FUNGSI GAMBAR SKETSA TEKNIS (VISUALISASI) ---
+# --- FUNGSI GAMBAR (VISUALISASI) ---
 def gambar_sketsa(jenis, params):
-    """Menggambar sketsa teknik sederhana berdasarkan input"""
     fig, ax = plt.subplots(figsize=(6, 3))
-    ax.set_axis_off() # Hilangkan sumbu X/Y biar bersih seperti gambar teknik
-    
+    ax.set_axis_off()
     if jenis == "Saluran (Primer/Sekunder/Tersier)":
-        # Gambar Penampang Trapesium
-        b = params.get('b', 1.0) # Lebar dasar
-        h = params.get('h', 1.0) # Tinggi
-        m = params.get('m', 1.0) # Kemiringan
-        
-        # Koordinat Trapesium
+        b, h, m = params.get('b', 1.0), params.get('h', 1.0), params.get('m', 1.0)
         x = [0, m*h, m*h + b, 2*m*h + b]
         y = [h, 0, 0, h]
-        
-        ax.plot(x, y, 'k-', linewidth=2) # Garis tanah
-        ax.plot([x[0]-1, x[3]+1], [h, h], 'g--', linewidth=1, label="Muka Tanah") # Garis atas
-        
-        # Label Dimensi
+        ax.plot(x, y, 'k-', linewidth=2)
+        ax.plot([x[0]-1, x[3]+1], [h, h], 'g--', linewidth=1, label="Muka Tanah")
         ax.text((m*h + b/2), -0.2, f"b = {b} m", ha='center', color='blue')
-        ax.text(m*h/2 - 0.2, h/2, f"h = {h} m", ha='right', color='red')
-        
-        ax.set_title(f"Sketsa Penampang Saluran ({params.get('tipe_lining','Tanah')})")
-        
+        ax.set_title(f"Sketsa Penampang ({params.get('tipe_lining','Tanah')})")
     elif jenis == "Bendung":
-        # Gambar Sketsa Bendung Samping
-        L = params.get('lebar_mercu', 10)
         H = params.get('tinggi_mercu', 2)
-        
-        # Gambar Body Bendung (Segitiga Sederhana)
         polygon = patches.Polygon([[0, 0], [2, H], [4, 0]], closed=True, edgecolor='black', facecolor='gray')
         ax.add_patch(polygon)
-        
-        # Garis Air
-        ax.plot([-1, 2], [H, H], 'b-', linewidth=2) # Hulu
-        ax.plot([4, 6], [0.5, 0.5], 'b--', linewidth=1) # Hilir
-        
-        ax.text(2, H+0.2, f"Mercu: {params.get('tipe_mercu','Bulat')}", ha='center')
         ax.text(2, H/2, f"H = {H} m", ha='center', color='white')
-        ax.set_title("Sketsa Melintang Bendung")
-
+        ax.set_title("Sketsa Bendung")
     else:
-        ax.text(0.5, 0.5, "Visualisasi belum tersedia untuk tipe ini", ha='center')
-        
+        ax.text(0.5, 0.5, "Visualisasi belum tersedia", ha='center')
     return fig
 
-# --- MENU DASHBOARD & LAINNYA (Sama seperti sebelumnya) ---
-# ... (Kode Dashboard, Peta, Analisa biarkan sama / copy dari sebelumnya) ...
-# Biar tidak kepanjangan, saya fokus ke MENU INPUT DATA yang baru saja
+# --- MENU NAVIGASI ---
+menu = st.sidebar.radio("Menu Navigasi", [
+    "Dashboard", 
+    "Input Aset Fisik", 
+    "Input Data Non-Fisik", 
+    "Peta Digital (GIS)", 
+    "Analisa Kinerja"
+])
 
-menu = st.sidebar.radio("Menu Navigasi", ["Dashboard", "Input Data Spesifik", "Peta Digital (GIS)", "Analisa Kinerja", "Export Laporan"])
-
-# --- DASHBOARD SIMPLE (Supaya kode jalan) ---
+# --- DASHBOARD ---
 if menu == "Dashboard":
-    st.header("Dashboard Utama")
+    st.header("Ringkasan Daerah Irigasi")
     df = app.get_data()
-    st.metric("Total Aset", len(df))
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Aset Fisik", f"{len(df)} Unit")
+    c2.metric("Rata-rata Kinerja Fisik", f"{df['nilai_kinerja'].mean() if not df.empty else 0:.1f}%")
+    
+    # Ringkasan Non Fisik
+    df_p3a = app.get_table_data('data_p3a')
+    c3.metric("Jumlah P3A Terdaftar", f"{len(df_p3a)} Kelompok")
+    
+    st.divider()
     if not df.empty:
+        st.subheader("Grafik Kondisi Fisik")
         st.bar_chart(df['nilai_kinerja'])
 
-# --- HALAMAN INPUT DATA SPESIFIK (FITUR UTAMA) ---
-elif menu == "Input Data Spesifik":
-    st.header("📝 Input Data Aset (Sesuai Template)")
-    
+# --- INPUT ASET FISIK (MENU LAMA) ---
+elif menu == "Input Aset Fisik":
+    st.header("📝 Input Data Prasarana Fisik")
     t1, t2 = st.tabs(["Formulir Detail", "Data Tabel"])
     
     with t1:
-        col_kiri, col_kanan = st.columns([1, 1])
-        
-        with col_kiri:
-            st.subheader("1. Identitas Aset")
-            jenis = st.selectbox("Pilih Jenis Bangunan:", 
-                ["Saluran (Primer/Sekunder/Tersier)", "Bendung", "Bangunan Bagi/Sadap", "Jembatan", "Lainnya"])
+        c_kiri, c_kanan = st.columns([1, 1])
+        with c_kiri:
+            jenis = st.selectbox("Jenis Bangunan:", ["Saluran (Primer/Sekunder/Tersier)", "Bendung", "Bangunan Bagi/Sadap", "Lainnya"])
+            nama = st.text_input("Nama Aset / Ruas")
             
-            nama = st.text_input("Nama Aset / Ruas", placeholder="Contoh: Saluran Sekunder Ruas 1")
-            file_peta = st.file_uploader("Upload Peta (KMZ/KML)", type=["kmz", "kml"])
-
-            st.subheader("2. Detail Teknis (Dimensi)")
-            
-            # --- FORM DINAMIS BERDASARKAN JENIS ---
-            detail_input = {} # Dictionary untuk simpan detail
-            
-            if jenis == "Saluran (Primer/Sekunder/Tersier)":
-                st.info("Parameter sesuai Template 'saluran.xls'")
-                panjang = st.number_input("Panjang Ruas (m)", min_value=0.0)
-                q_max = st.number_input("Debit Rencana Q (m3/dt)", min_value=0.0)
-                tipe_lining = st.selectbox("Tipe Lining", ["Tanah", "Pasangan Batu", "Beton", "Precast"])
-                
-                st.write("**Dimensi Penampang:**")
-                c1, c2, c3 = st.columns(3)
-                b = c1.number_input("Lebar Dasar (b)", value=1.0)
-                h = c2.number_input("Tinggi Jagaan (h)", value=1.0)
-                m = c3.number_input("Kemiringan Talud (m)", value=1.0)
-                
-                # Simpan ke dict
-                detail_input = {"panjang": panjang, "q_max": q_max, "tipe_lining": tipe_lining, "b": b, "h": h, "m": m}
-                satuan_input = "m" # Default satuan saluran
-                
-            elif jenis == "Bendung":
-                st.info("Parameter sesuai Template 'bendung.xls'")
-                tipe_mercu = st.selectbox("Tipe Mercu", ["Bulat", "Ogee", "Tajam"])
-                lebar_mercu = st.number_input("Lebar Efektif Mercu (m)", min_value=0.0)
-                tinggi_mercu = st.number_input("Tinggi Mercu dari Lantai (m)", value=2.0)
-                kolam_olak = st.selectbox("Tipe Kolam Olak", ["USBR", "Vlughter", "Bucket"])
-                
-                detail_input = {"tipe_mercu": tipe_mercu, "lebar_mercu": lebar_mercu, "tinggi_mercu": tinggi_mercu, "kolam_olak": kolam_olak}
-                satuan_input = "bh"
-
+            detail_input = {}
+            if "Saluran" in jenis:
+                b = st.number_input("Lebar Dasar (b)", 1.0)
+                h = st.number_input("Tinggi Jagaan (h)", 1.0)
+                m = st.number_input("Kemiringan (m)", 1.0)
+                detail_input = {"b": b, "h": h, "m": m, "tipe_lining": st.selectbox("Lining", ["Tanah", "Beton"])}
+                satuan = "m"
+            elif "Bendung" in jenis:
+                H = st.number_input("Tinggi Mercu (m)", 2.0)
+                detail_input = {"tinggi_mercu": H, "tipe_mercu": st.selectbox("Tipe", ["Bulat", "Ogee"])}
+                satuan = "bh"
             else:
-                st.write("Isi parameter umum:")
-                dimensi_umum = st.text_input("Dimensi (Panjang/Lebar)")
-                detail_input = {"dimensi_umum": dimensi_umum}
-                satuan_input = "unit"
+                satuan = "unit"
 
-        with col_kanan:
-            st.subheader("3. Visualisasi Sketsa")
-            # Panggil fungsi gambar
+        with c_kanan:
             if detail_input:
-                fig = gambar_sketsa(jenis, detail_input)
-                st.pyplot(fig)
-            else:
-                st.warning("Isi data teknis untuk melihat sketsa.")
-            
+                st.pyplot(gambar_sketsa(jenis, detail_input))
             st.divider()
-            st.subheader("4. Kondisi Fisik")
-            cb = st.number_input("Volume Baik", min_value=0.0)
-            crr = st.number_input("Volume Rusak Ringan", min_value=0.0)
-            crb = st.number_input("Volume Rusak Berat", min_value=0.0)
+            cb = st.number_input("Vol Baik", min_value=0.0)
+            crr = st.number_input("Vol Rusak Ringan", min_value=0.0)
+            crb = st.number_input("Vol Rusak Berat", min_value=0.0)
             
-            if st.button("💾 SIMPAN DATA ASET", type="primary"):
-                if nama:
-                    msg = app.tambah_data_kompleks(nama, jenis, satuan_input, cb, crr, crb, detail_input, file_peta)
-                    st.success(msg)
-                else:
-                    st.error("Nama Aset wajib diisi!")
+            if st.button("Simpan Data Fisik"):
+                st.success(app.tambah_data_kompleks(nama, jenis, satuan, cb, crr, crb, detail_input))
 
     with t2:
-        st.write("Database Aset:")
         df = app.get_data()
-        st.dataframe(df)
+        ed = st.data_editor(df, hide_index=True, num_rows="dynamic", use_container_width=True)
+        if st.button("Update Tabel Fisik"):
+            app.update_data(ed)
+            st.rerun()
 
-# --- MENU LAIN (Copy Paste dari app.py sebelumnya untuk Peta, Reset, dll) ---
-# ...
+# --- INPUT DATA NON-FISIK (MENU BARU!) ---
+elif menu == "Input Data Non-Fisik":
+    st.header("📋 Data Penunjang (Non-Fisik)")
+    st.info("Sesuai Permen PUPR 23/2015: Produktivitas, Kelembagaan, dan SDM.")
+    
+    tab_tanam, tab_p3a, tab_sdm = st.tabs(["🌾 Produktivitas Tanam", "👥 Kelembagaan P3A", "🏢 SDM & Sarana"])
+    
+    # --- TAB 1: TANAM ---
+    with tab_tanam:
+        with st.form("form_tanam"):
+            c1, c2 = st.columns(2)
+            musim = c1.selectbox("Musim Tanam", ["MT-1 (Rendeng)", "MT-2 (Gadu I)", "MT-3 (Gadu II)"])
+            luas = c2.number_input("Rencana Luas Tanam (Ha)", min_value=0.0)
+            realisasi = c2.number_input("Realisasi Luas Tanam (Ha)", min_value=0.0)
+            padi = c1.number_input("Produktivitas Padi (Ton/Ha)", min_value=0.0)
+            palawija = c1.number_input("Produktivitas Palawija (Ton/Ha)", min_value=0.0)
+            if st.form_submit_button("Simpan Data Tanam"):
+                st.success(app.tambah_data_tanam(musim, luas, realisasi, padi, palawija))
+        
+        st.write("Riwayat Data Tanam:")
+        df_tanam = app.get_table_data('data_tanam')
+        st.data_editor(df_tanam, num_rows="dynamic", key='editor_tanam')
+
+    # --- TAB 2: P3A ---
+    with tab_p3a:
+        with st.form("form_p3a"):
+            c1, c2 = st.columns(2)
+            nama_p3a = c1.text_input("Nama P3A / GP3A")
+            desa = c1.text_input("Wilayah Desa")
+            status = c2.selectbox("Status Badan Hukum", ["Sudah Berbadan Hukum", "Belum", "Dalam Proses"])
+            aktif = c2.selectbox("Keaktifan", ["Aktif", "Sedang", "Kurang Aktif/Macet"])
+            anggota = c1.number_input("Jumlah Anggota (Orang)", min_value=0, step=1)
+            if st.form_submit_button("Simpan Data P3A"):
+                st.success(app.tambah_data_p3a(nama_p3a, desa, status, aktif, anggota))
+        
+        st.write("Daftar P3A:")
+        df_p3a = app.get_table_data('data_p3a')
+        st.data_editor(df_p3a, num_rows="dynamic", key='editor_p3a')
+
+    # --- TAB 3: SDM & SARANA ---
+    with tab_sdm:
+        st.write("Data Personil (Juru/Pengamat) dan Sarana Kantor")
+        with st.form("form_sdm"):
+            jenis = st.selectbox("Jenis Data", ["Personil/SDM", "Sarana Kantor", "Alat Transportasi", "Alat Komunikasi"])
+            nama_item = st.text_input("Nama Personil / Nama Barang")
+            kondisi = st.text_input("Jabatan / Kondisi Barang", placeholder="Contoh: Juru Air atau Rusak Ringan")
+            ket = st.text_input("Keterangan Tambahan")
+            if st.form_submit_button("Simpan Data SDM/Sarana"):
+                st.success(app.tambah_sdm_sarana(jenis, nama_item, kondisi, ket))
+        
+        st.write("Data SDM & Sarana:")
+        df_sdm = app.get_table_data('data_sdm_sarana')
+        st.data_editor(df_sdm, num_rows="dynamic", key='editor_sdm')
+
+# --- PETA DIGITAL ---
+elif menu == "Peta Digital (GIS)":
+    st.header("Peta Wilayah")
+    st.info("Fitur visualisasi peta (Upload KML di menu Input Aset Fisik).")
+    # (Kode peta sederhana, bisa dikembangkan nanti)
+
+# --- ANALISA KINERJA ---
+elif menu == "Analisa Kinerja":
+    st.header("Analisa Kinerja Sistem")
+    st.write("Analisa gabungan Fisik & Non-Fisik akan muncul di sini setelah data lengkap.")
