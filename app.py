@@ -4,7 +4,7 @@ from modules.backend import IrigasiBackend
 import os
 
 # Konfigurasi Halaman
-st.set_page_config(page_title="Sistem Manajemen Aset Irigasi", layout="wide")
+st.set_page_config(page_title="SIKI - Sistem Irigasi", layout="wide")
 st.title("🌊 Sistem Informasi Kinerja Irigasi (SIKI)")
 
 # Inisialisasi Backend
@@ -15,59 +15,87 @@ app = st.session_state.backend
 # --- SIDEBAR MENU ---
 menu = st.sidebar.radio("Menu Navigasi", ["Dashboard", "Input Data Inventaris", "Analisa Kinerja", "Export Laporan"])
 
+# --- DEBUGGING TOOLS (BANTUAN) ---
+with st.sidebar.expander("🛠️ Menu Teknisi (Cek Data)"):
+    st.write("Gunakan ini untuk mengecek apakah file data lama terbaca.")
+    if st.button("Cek Folder 'data_lama'"):
+        folder = "data_lama"
+        if os.path.exists(folder):
+            files = os.listdir(folder)
+            st.success(f"Folder DITEMUKAN! Isi {len(files)} file.")
+            st.write(files[:5]) # Tampilkan 5 file pertama
+        else:
+            st.error("❌ Folder 'data_lama' TIDAK DITEMUKAN. Pastikan sudah di-upload ke GitHub!")
+
 # --- HALAMAN DASHBOARD ---
 if menu == "Dashboard":
     st.header("Ringkasan Daerah Irigasi")
     df = app.get_data()
     
     col1, col2, col3 = st.columns(3)
-    col1.metric("Total Aset Terdata", f"{len(df)} Unit")
-    
+    # Gunakan 0 jika data kosong
+    total_aset = len(df) if not df.empty else 0
     rata_kinerja = df['nilai_kinerja'].mean() if not df.empty else 0
-    col2.metric("Rata-rata Kinerja Fisik", f"{rata_kinerja:.2f}%")
-    
     rusak_berat = len(df[df['nilai_kinerja'] < 60]) if not df.empty else 0
+
+    col1.metric("Total Aset Terdata", f"{total_aset} Unit")
+    col2.metric("Rata-rata Kinerja Fisik", f"{rata_kinerja:.2f}%")
     col3.metric("Aset Rusak Berat", f"{rusak_berat} Unit", delta_color="inverse")
 
     if not df.empty:
         st.subheader("Sebaran Kondisi Aset")
-        st.bar_chart(df.groupby('jenis_aset')['nilai_kinerja'].mean())
+        try:
+            st.bar_chart(df.groupby('jenis_aset')['nilai_kinerja'].mean())
+        except:
+            st.info("Grafik belum tersedia (data belum cukup).")
 
 # --- HALAMAN INPUT DATA ---
 elif menu == "Input Data Inventaris":
     st.header("Database Aset Irigasi")
     
     # Tombol Import Data Lama
-    with st.expander("Import Data Lama (Sekali Saja)"):
-        st.info("Pastikan file .xls/.csv lama sudah ada di folder 'data_lama'")
-        if st.button("Jalankan Import Data Lama"):
-            hasil = app.import_data_lama("data_lama")
-            st.success(hasil)
-            st.rerun()
+    with st.expander("📥 Import Data Lama (Klik Disini)", expanded=True):
+        st.info("Pastikan file .xls/.csv lama sudah ada di folder 'data_lama' di GitHub.")
+        if st.button("JALANKAN IMPORT SEKARANG"):
+            with st.spinner("Sedang membaca file lama..."):
+                hasil = app.import_data_lama("data_lama")
+                if "ERROR" in hasil:
+                    st.error(hasil)
+                else:
+                    st.success(hasil)
+                    st.balloons()
+                    # Refresh halaman manual pakai query param trik (opsional) atau user klik menu lain
 
     # Tabel Editor Utama
-    st.write("Silakan edit kondisi aset di bawah ini (Klik dua kali pada sel):")
+    st.divider()
+    st.write("### Editor Data Kondisi")
     df = app.get_data()
     
-    # Konfigurasi kolom agar mudah diedit
-    edited_df = st.data_editor(
-        df,
-        column_config={
-            "kondisi_b": st.column_config.NumberColumn("Kondisi Baik", help="Volume/Jumlah Baik"),
-            "kondisi_rr": st.column_config.NumberColumn("Rusak Ringan", help="Volume/Jumlah RR"),
-            "kondisi_rb": st.column_config.NumberColumn("Rusak Berat", help="Volume/Jumlah RB"),
-            "nilai_kinerja": st.column_config.ProgressColumn("Nilai Kinerja", min_value=0, max_value=100, format="%.2f%%"),
-        },
-        disabled=["id", "nilai_kinerja"], # Nilai kinerja gak boleh diedit manual, harus dihitung
-        hide_index=True,
-        num_rows="dynamic"
-    )
+    if df.empty:
+        st.warning("Data masih kosong. Silakan Import Data Lama dulu di atas.")
+    else:
+        # Konfigurasi kolom
+        edited_df = st.data_editor(
+            df,
+            column_config={
+                "nama_aset": st.column_config.TextColumn("Nama Aset", width="large", disabled=True),
+                "jenis_aset": st.column_config.TextColumn("Jenis", width="small", disabled=True),
+                "kondisi_b": st.column_config.NumberColumn("Baik (m/bh)", help="Volume kondisi Baik", min_value=0),
+                "kondisi_rr": st.column_config.NumberColumn("R.Ringan (m/bh)", help="Volume Rusak Ringan", min_value=0),
+                "kondisi_rb": st.column_config.NumberColumn("R.Berat (m/bh)", help="Volume Rusak Berat", min_value=0),
+                "nilai_kinerja": st.column_config.ProgressColumn("Nilai Kinerja", min_value=0, max_value=100, format="%.2f%%"),
+            },
+            disabled=["id", "kode_aset", "nilai_kinerja"], 
+            hide_index=True,
+            num_rows="dynamic",
+            use_container_width=True
+        )
 
-    if st.button("Simpan Perubahan"):
-        app.update_data(edited_df)
-        app.hitung_ulang_kinerja() # Otomatis hitung ulang saat simpan
-        st.success("Data berhasil disimpan & Nilai Kinerja diperbarui!")
-        st.rerun()
+        if st.button("💾 SIMPAN PERUBAHAN & HITUNG ULANG"):
+            app.update_data(edited_df)
+            app.hitung_ulang_kinerja()
+            st.success("Data berhasil disimpan! Nilai kinerja sudah diperbarui.")
+            st.rerun()
 
 # --- HALAMAN ANALISA KINERJA ---
 elif menu == "Analisa Kinerja":
@@ -79,31 +107,39 @@ elif menu == "Analisa Kinerja":
     else:
         # Filter Prioritas
         st.subheader("Rekomendasi Penanganan (Prioritas)")
-        prioritas_df = df[df['nilai_kinerja'] < 60].sort_values(by='nilai_kinerja')
-        
-        st.write("Daftar aset yang **WAJIB** segera ditangani (Rusak Berat):")
-        st.dataframe(prioritas_df[['nama_aset', 'jenis_aset', 'nilai_kinerja', 'keterangan']], use_container_width=True)
+        try:
+            # Filter yang rusak berat (Nilai < 60)
+            prioritas_df = df[df['nilai_kinerja'] < 60].sort_values(by='nilai_kinerja')
+            
+            if prioritas_df.empty:
+                st.success("🎉 Tidak ada aset yang Rusak Berat (Kinerja < 60).")
+            else:
+                st.error(f"Ditemukan {len(prioritas_df)} aset KRITIS yang butuh penanganan segera:")
+                st.dataframe(
+                    prioritas_df[['nama_aset', 'jenis_aset', 'nilai_kinerja', 'kondisi_rb']], 
+                    use_container_width=True,
+                    hide_index=True
+                )
+        except Exception as e:
+            st.error(f"Terjadi kesalahan filter: {e}")
 
 # --- HALAMAN EXPORT ---
 elif menu == "Export Laporan":
-    st.header("Cetak Laporan (Blangko)")
+    st.header("Cetak Laporan (Excel)")
     
-    st.write("Download data hasil analisa ke format Excel.")
-    
-    if st.button("Generate Laporan Excel"):
+    if st.button("Generate File Excel"):
         df = app.get_data()
         
-        # Proses Export Simple ke Excel
-        output_file = 'output/Laporan_Kinerja_Terbaru.xlsx'
-        
-        # Menggunakan ExcelWriter untuk formatting sederhana
-        with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
-            df.to_excel(writer, sheet_name='Blangko 1-P', index=False)
+        # Simpan ke memori buffer (agar tidak perlu file temp)
+        # Sederhana saja pakai pandas to_excel default dulu
+        import io
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+            df.to_excel(writer, sheet_name='Laporan Fisik', index=False)
             
-        with open(output_file, "rb") as file:
-            btn = st.download_button(
-                label="📥 Download File Excel",
-                data=file,
-                file_name="Laporan_Kinerja_Irigasi.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+        st.download_button(
+            label="📥 Download Laporan Excel",
+            data=buffer,
+            file_name="Laporan_Kinerja_Irigasi_Terbaru.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
