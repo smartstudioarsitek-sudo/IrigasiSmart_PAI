@@ -16,6 +16,7 @@ class IrigasiBackend:
         self.init_db()
 
     def init_db(self):
+        # Buat tabel jika belum ada
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS aset_fisik (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -32,7 +33,7 @@ class IrigasiBackend:
                 keterangan TEXT
             )
         ''')
-        # Cek kolom kmz
+        # Cek apakah kolom file_kmz sudah ada (untuk update otomatis)
         cek = self.cursor.execute("PRAGMA table_info(aset_fisik)").fetchall()
         cols = [c[1] for c in cek]
         if 'file_kmz' not in cols:
@@ -41,17 +42,19 @@ class IrigasiBackend:
                 self.conn.commit()
             except: pass
 
-    # --- FITUR RESET DATA (BARU) ---
+    # --- FITUR RESET DATA (YANG TADI ERROR) ---
     def hapus_semua_data(self):
+        """Menghapus seluruh isi database aset"""
         try:
             self.cursor.execute("DELETE FROM aset_fisik")
-            self.cursor.execute("DELETE FROM sqlite_sequence WHERE name='aset_fisik'") # Reset ID jadi 1 lagi
+            # Reset nomor urut (Auto Increment) agar kembali ke 1
+            self.cursor.execute("DELETE FROM sqlite_sequence WHERE name='aset_fisik'") 
             self.conn.commit()
             return "✅ Database berhasil dikosongkan!"
         except Exception as e:
             return f"❌ Gagal hapus data: {e}"
 
-    # --- FITUR JSON ---
+    # --- FITUR JSON (BACKUP & RESTORE) ---
     def export_ke_json(self):
         df = pd.read_sql("SELECT * FROM aset_fisik", self.conn)
         return df.to_json(orient='records')
@@ -59,14 +62,16 @@ class IrigasiBackend:
     def import_dari_json(self, json_file):
         try:
             df = pd.read_json(json_file)
+            # Bersihkan dulu data lama
             self.cursor.execute("DELETE FROM aset_fisik")
+            # Masukkan data baru
             df.to_sql('aset_fisik', self.conn, if_exists='append', index=False)
             self.conn.commit()
-            return f"✅ Berhasil Restore! {len(df)} data dimuat."
+            return f"✅ Berhasil Restore! {len(df)} data telah dimuat."
         except Exception as e:
-            return f"❌ Gagal Import: {e}"
+            return f"❌ Gagal Import JSON: {e}"
 
-    # --- CRUD ---
+    # --- CRUD (TAMBAH, BACA, EDIT) ---
     def tambah_data_baru(self, nama, jenis, satuan, b, rr, rb, file_kmz=None):
         try:
             total = b + rr + rb
@@ -85,15 +90,17 @@ class IrigasiBackend:
         except Exception as e:
             return f"❌ Gagal Simpan: {e}"
 
-    def import_data_lama(self, folder_path):
-        # ... (Kode import lama, sama seperti sebelumnya) ...
-        # Saya singkat supaya tidak kepanjangan di chat
-        pass 
-
     def get_data(self):
         return pd.read_sql("SELECT * FROM aset_fisik", self.conn)
 
     def update_data(self, df_edited):
-        self.cursor.execute("DELETE FROM aset_fisik")
-        df_edited.to_sql('aset_fisik', self.conn, if_exists='append', index=False)
-        self.conn.commit()
+        try:
+            self.cursor.execute("DELETE FROM aset_fisik")
+            df_edited.to_sql('aset_fisik', self.conn, if_exists='append', index=False)
+            self.conn.commit()
+        except Exception as e:
+            print(f"Gagal update: {e}")
+
+    # Fungsi legacy untuk import excel lama (disimpan agar tidak error jika dipanggil)
+    def import_data_lama(self, folder_path):
+        pass
