@@ -16,7 +16,7 @@ class IrigasiBackend:
         self.init_db()
 
     def init_db(self):
-        # 1. Tabel Aset Fisik (Yg Lama)
+        # 1. Tabel Aset Fisik (Lama)
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS aset_fisik (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,47 +26,48 @@ class IrigasiBackend:
             )
         ''')
 
-        # 2. Tabel Produktivitas Tanam
+        # 2. Tabel Non-Fisik (Baru)
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS data_tanam (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                musim_tanam TEXT, -- MT1, MT2, MT3
-                luas_tanam_ha REAL,
-                realisasi_tanam_ha REAL,
-                produktivitas_padi REAL, -- Ton/Ha
-                produktivitas_palawija REAL
+                musim_tanam TEXT, luas_tanam_ha REAL, realisasi_tanam_ha REAL,
+                produktivitas_padi REAL, produktivitas_palawija REAL
             )
         ''')
-
-        # 3. Tabel Kelembagaan (P3A / GP3A)
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS data_p3a (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                nama_p3a TEXT,
-                desa TEXT,
-                status_badan_hukum TEXT, -- Sudah/Belum
-                keaktifan TEXT, -- Aktif/Sedang/Kurang
-                jumlah_anggota INTEGER
+                nama_p3a TEXT, desa TEXT, status_badan_hukum TEXT,
+                keaktifan TEXT, jumlah_anggota INTEGER
             )
         ''')
-
-        # 4. Tabel Personil & Sarana
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS data_sdm_sarana (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                jenis_data TEXT, -- Personil atau Sarana
-                nama_item TEXT, -- Misal: Nama Juru atau Kantor Pengamat
-                jabatan_kondisi TEXT, -- Misal: Juru Air atau Rusak Ringan
-                keterangan TEXT
+                jenis_data TEXT, nama_item TEXT, jabatan_kondisi TEXT, keterangan TEXT
             )
         ''')
         
-        # Cek kolom legacy (untuk kompatibilitas)
+        # Cek kolom legacy
         cek = self.cursor.execute("PRAGMA table_info(aset_fisik)").fetchall()
         cols = [c[1] for c in cek]
         if 'detail_teknis' not in cols: self.cursor.execute("ALTER TABLE aset_fisik ADD COLUMN detail_teknis TEXT")
         if 'file_kmz' not in cols: self.cursor.execute("ALTER TABLE aset_fisik ADD COLUMN file_kmz TEXT")
         self.conn.commit()
+
+    # --- INPUT ASET FISIK (LENGKAP) ---
+    def tambah_data_kompleks(self, nama, jenis, satuan, b, rr, rb, detail_dict, file_kmz=None):
+        try:
+            total = b + rr + rb
+            nilai = 0
+            if total > 0: nilai = ((b * 100) + (rr * 70) + (rb * 50)) / total
+            kmz_name = file_kmz.name if file_kmz else "-"
+            detail_json = json.dumps(detail_dict)
+            self.cursor.execute('''INSERT INTO aset_fisik (nama_aset, jenis_aset, satuan, kondisi_b, kondisi_rr, kondisi_rb, nilai_kinerja, detail_teknis, file_kmz)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''', (nama, jenis, satuan, b, rr, rb, round(nilai, 2), detail_json, kmz_name))
+            self.conn.commit()
+            return "✅ Data Fisik Tersimpan!"
+        except Exception as e: return f"❌ Gagal: {e}"
 
     # --- INPUT DATA NON-FISIK ---
     def tambah_data_tanam(self, musim, luas, realisasi, padi, palawija):
@@ -93,34 +94,21 @@ class IrigasiBackend:
             return "✅ Data Tersimpan!"
         except Exception as e: return f"❌ Gagal: {e}"
 
-    # --- GETTERS GENERIC ---
-    def get_table_data(self, table_name):
-        try:
-            return pd.read_sql(f"SELECT * FROM {table_name}", self.conn)
-        except: return pd.DataFrame()
+    # --- FITUR JSON BACKUP (DIKEMBALIKAN) ---
+    def export_ke_json(self):
+        # Saat ini backup tabel fisik dulu (prioritas)
+        return pd.read_sql("SELECT * FROM aset_fisik", self.conn).to_json(orient='records')
 
-    # --- UPDATE TABEL EDITOR ---
-    def update_table_data(self, table_name, df):
+    def import_dari_json(self, f):
         try:
-            self.cursor.execute(f"DELETE FROM {table_name}")
-            df.to_sql(table_name, self.conn, if_exists='append', index=False)
+            df = pd.read_json(f)
+            self.cursor.execute("DELETE FROM aset_fisik")
+            df.to_sql('aset_fisik', self.conn, if_exists='append', index=False)
             self.conn.commit()
-        except Exception as e: print(f"Error update {table_name}: {e}")
+            return "✅ Restore Berhasil!"
+        except Exception as e: return str(e)
 
-    # --- FUNGSI LAMA (TETAP ADA) ---
-    def tambah_data_kompleks(self, nama, jenis, satuan, b, rr, rb, detail_dict, file_kmz=None):
-        try:
-            total = b + rr + rb
-            nilai = 0
-            if total > 0: nilai = ((b * 100) + (rr * 70) + (rb * 50)) / total
-            kmz_name = file_kmz.name if file_kmz else "-"
-            detail_json = json.dumps(detail_dict)
-            self.cursor.execute('''INSERT INTO aset_fisik (nama_aset, jenis_aset, satuan, kondisi_b, kondisi_rr, kondisi_rb, nilai_kinerja, detail_teknis, file_kmz)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''', (nama, jenis, satuan, b, rr, rb, round(nilai, 2), detail_json, kmz_name))
-            self.conn.commit()
-            return "✅ Data Fisik Tersimpan!"
-        except Exception as e: return f"❌ Gagal: {e}"
-
+    # --- FITUR RESET DATA (DIKEMBALIKAN) ---
     def hapus_semua_data(self):
         try:
             tables = ['aset_fisik', 'data_tanam', 'data_p3a', 'data_sdm_sarana']
@@ -128,10 +116,16 @@ class IrigasiBackend:
                 self.cursor.execute(f"DELETE FROM {t}")
                 self.cursor.execute(f"DELETE FROM sqlite_sequence WHERE name='{t}'")
             self.conn.commit()
-            return "✅ Semua Database Bersih!"
+            return "✅ Database Bersih Total!"
         except: return "Gagal."
 
+    # --- GETTERS ---
     def get_data(self): return pd.read_sql("SELECT * FROM aset_fisik", self.conn)
-    def export_ke_json(self): return pd.read_sql("SELECT * FROM aset_fisik", self.conn).to_json(orient='records')
-    def import_dari_json(self, f): return "Fitur JSON hanya untuk aset fisik saat ini."
+    def get_table_data(self, t): 
+        try: return pd.read_sql(f"SELECT * FROM {t}", self.conn) 
+        except: return pd.DataFrame()
     def update_data(self, df): self.update_table_data('aset_fisik', df)
+    def update_table_data(self, t, df):
+        self.cursor.execute(f"DELETE FROM {t}")
+        df.to_sql(t, self.conn, if_exists='append', index=False)
+        self.conn.commit()
