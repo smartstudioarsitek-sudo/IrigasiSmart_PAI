@@ -7,8 +7,8 @@ import folium
 from streamlit_folium import st_folium
 import xml.etree.ElementTree as ET
 
-st.set_page_config(page_title="SIKI - Sistem Irigasi", layout="wide")
-st.title("🌊 Sistem Informasi Kinerja Irigasi (SIKI)")
+st.set_page_config(page_title="IKSI - Sistem Irigasi", layout="wide")
+st.title("🌊  Informasi Kinerja Sistem Irigasi (IKSI)")
 
 if 'backend' not in st.session_state:
     st.session_state.backend = IrigasiBackend()
@@ -185,3 +185,4 @@ elif menu == "Export Laporan":
         with pd.ExcelWriter(b, engine='xlsxwriter') as w:
             df.to_excel(w, index=False)
         st.download_button("Download", b, "Laporan.xlsx")
+
