@@ -6,17 +6,15 @@ class IrigasiBackend:
     def __init__(self, db_path='database/irigasi.db'):
         """
         Inisialisasi koneksi database.
-        Otomatis membuat folder 'database' jika belum ada untuk mencegah error.
+        Otomatis membuat folder 'database' jika belum ada.
         """
-        # --- BAGIAN PERBAIKAN ERROR ---
-        folder = os.path.dirname(db_path)
-        if folder and not os.path.exists(folder):
+        # --- PERBAIKAN: AUTO-CREATE FOLDER ---
+        self.db_folder = os.path.dirname(db_path)
+        if self.db_folder and not os.path.exists(self.db_folder):
             try:
-                os.makedirs(folder)
-                print(f"Folder '{folder}' berhasil dibuat.")
+                os.makedirs(self.db_folder)
             except OSError as e:
-                print(f"Gagal membuat folder database: {e}")
-        # ------------------------------
+                print(f"Error membuat folder DB: {e}")
 
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.cursor = self.conn.cursor()
@@ -43,23 +41,32 @@ class IrigasiBackend:
 
     def import_data_lama(self, folder_path):
         """
-        Membaca file CSV/XLS lama dari folder dan memasukkannya ke DB.
+        Import data robust: Menangani format file legacy yang campur aduk.
         """
+        # Cek apakah folder ada
         if not os.path.exists(folder_path):
-            return f"Error: Folder '{folder_path}' tidak ditemukan."
+            # Coba cari folder relatif terhadap script yang jalan
+            current_dir = os.getcwd()
+            alt_path = os.path.join(current_dir, folder_path)
+            if os.path.exists(alt_path):
+                folder_path = alt_path
+            else:
+                return f"❌ ERROR: Folder '{folder_path}' tidak ditemukan di server. Pastikan folder 'data_lama' sudah di-upload ke GitHub."
 
         files = os.listdir(folder_path)
-        count = 0
+        count_sukses = 0
+        files_processed = 0
         errors = []
         
         for file in files:
-            # Hanya proses file csv atau xls
-            if not (file.endswith('.csv') or file.endswith('.xls') or file.endswith('.txt')):
+            # Filter file sampah/hidden
+            if file.startswith('.') or not (file.endswith('.csv') or file.endswith('.xls') or file.endswith('.txt')):
                 continue
 
+            files_processed += 1
             file_path = os.path.join(folder_path, file)
             
-            # Deteksi jenis aset dari nama file secara sederhana
+            # Deteksi jenis aset dari nama file
             file_lower = file.lower()
             jenis = "Umum"
             if "bendung" in file_lower: jenis = "Bendung"
@@ -71,28 +78,42 @@ class IrigasiBackend:
             elif "jembatan" in file_lower: jenis = "Jembatan"
 
             try:
-                # Membaca format lama (biasanya dipisah titik koma ';')
-                # Skiprows=1 karena baris pertama biasanya header teknis aneh
-                df = pd.read_csv(file_path, sep=';', on_bad_lines='skip', skiprows=1, header=None, engine='python')
-                
+                # --- LOGIKA BACA FILE YANG LEBIH KUAT ---
+                # File kakak rata-rata adalah CSV dengan pemisah titik koma (;), 
+                # meskipun ekstensinya .xls
+                try:
+                    # Coba baca sebagai CSV (titik koma)
+                    df = pd.read_csv(file_path, sep=';', on_bad_lines='skip', skiprows=0, header=None, engine='python')
+                except:
+                    # Jika gagal, coba baca sebagai Excel beneran
+                    try:
+                        df = pd.read_excel(file_path, header=None)
+                    except:
+                        # Skip file ini jika tidak bisa dibaca sama sekali
+                        continue
+
+                # Loop setiap baris
                 for _, row in df.iterrows():
-                    # Mapping kolom berdasarkan pola file kakak:
-                    # Kolom 1 (Index 1) = Kode Aset (misal: 1-1-1-1-01)
-                    # Kolom 2 (Index 2) = Nama Aset (misal: Bendung Way Seputih)
+                    # Kriteria Data Valid Ala File Lama Kakak:
+                    # Minimal punya 3 kolom
+                    if len(row) < 3: 
+                        continue
                     
-                    if len(row) > 2: # Pastikan baris punya cukup kolom
-                        kode = str(row[1]) if pd.notna(row[1]) else "-"
-                        nama = str(row[2]) if pd.notna(row[2]) else "Tanpa Nama"
+                    kode = str(row[1]).strip()
+                    nama = str(row[2]).strip()
+
+                    # Validasi: Kode biasanya ada angkanya, Nama tidak boleh kosong/NaN
+                    if (len(kode) > 3) and (nama.lower() != 'nan') and (nama != ''):
+                        # Cek duplikat agar tidak double saat import berkali-kali
+                        cek = self.cursor.execute("SELECT id FROM aset_fisik WHERE kode_aset = ?", (kode,)).fetchone()
                         
-                        # Bersihkan data (kadang ada karakter aneh)
-                        nama = nama.strip()
-                        
-                        if nama and nama != "nan":
+                        if not cek:
                             self.cursor.execute('''
                                 INSERT INTO aset_fisik (kode_aset, nama_aset, jenis_aset)
                                 VALUES (?, ?, ?)
                             ''', (kode, nama, jenis))
-                            count += 1
+                            count_sukses += 1
+                            
             except Exception as e:
                 errors.append(f"{file}: {str(e)}")
         
@@ -100,14 +121,17 @@ class IrigasiBackend:
         
         pesan_error = ""
         if errors:
-            pesan_error = f" | Gagal baca: {len(errors)} file."
+            pesan_error = f"\n⚠️ Ada {len(errors)} file bermasalah."
             
-        return f"Selesai! Berhasil import {count} aset.{pesan_error}"
+        if files_processed == 0:
+            return "⚠️ Folder ditemukan TAPI tidak ada file .xls/.csv di dalamnya. Pastikan file sudah di-upload."
+            
+        return f"✅ SUKSES! {count_sukses} aset baru berhasil di-import dari {files_processed} file.{pesan_error}"
 
     def hitung_ulang_kinerja(self):
         """
         Menghitung Nilai IKSI berdasarkan Permen PUPR.
-        Logic: (B*100 + RR*70 + RB*50) / Total Volume
+        Rumus: (B*100 + RR*70 + RB*50) / Total Volume
         """
         try:
             df = pd.read_sql("SELECT * FROM aset_fisik", self.conn)
@@ -116,57 +140,48 @@ class IrigasiBackend:
                 return df
 
             def rumus(row):
-                # Pastikan angka, ganti None/NaN dengan 0
-                b = float(row['kondisi_b']) if pd.notna(row['kondisi_b']) else 0
-                rr = float(row['kondisi_rr']) if pd.notna(row['kondisi_rr']) else 0
-                rb = float(row['kondisi_rb']) if pd.notna(row['kondisi_rb']) else 0
-                
+                # Konversi ke float & handle error jika kosong
+                try:
+                    b = float(row['kondisi_b']) if pd.notna(row['kondisi_b']) else 0
+                    rr = float(row['kondisi_rr']) if pd.notna(row['kondisi_rr']) else 0
+                    rb = float(row['kondisi_rb']) if pd.notna(row['kondisi_rb']) else 0
+                except:
+                    return 0
+
                 total = b + rr + rb
                 if total == 0: return 0.0
                 
-                # Rumus Weighted Average
+                # --- RUMUS INTI SESUAI PERMINTAAN KAKAK ---
+                # Baik = 100%, RR = 70%, RB = 50%
                 skor = (b * 100) + (rr * 70) + (rb * 50)
+                
                 return round(skor / total, 2)
 
             df['nilai_kinerja'] = df.apply(rumus, axis=1)
             
-            # Simpan hasil hitungan balik ke database
-            # Menggunakan executemany untuk performa lebih baik
+            # Update massal ke database
             data_to_update = []
             for _, row in df.iterrows():
                 data_to_update.append((row['nilai_kinerja'], row['id']))
             
-            self.cursor.executemany('''
-                UPDATE aset_fisik SET nilai_kinerja = ? WHERE id = ?
-            ''', data_to_update)
-            
+            self.cursor.executemany('UPDATE aset_fisik SET nilai_kinerja = ? WHERE id = ?', data_to_update)
             self.conn.commit()
             return df
+            
         except Exception as e:
-            print(f"Error hitung kinerja: {e}")
-            return pd.DataFrame()
+            print(f"Error hitung: {e}")
+            return pd.DataFrame() # Return kosong jika error
 
     def get_data(self):
-        """Mengambil seluruh data untuk ditampilkan di tabel"""
         return pd.read_sql("SELECT * FROM aset_fisik", self.conn)
 
     def update_data(self, df_edited):
-        """
-        Update database dari hasil edit tabel di layar Streamlit.
-        Metode: Replace All (Hapus lama, insert baru) untuk kemudahan prototype.
-        """
+        """Update data dari tabel editor"""
         try:
-            # Hapus data lama
+            # Cara aman: Hapus semua -> Insert ulang (untuk prototype)
+            # Untuk production sebaiknya UPDATE per ID
             self.cursor.execute("DELETE FROM aset_fisik")
-            # Masukkan data baru dari editor
             df_edited.to_sql('aset_fisik', self.conn, if_exists='append', index=False)
             self.conn.commit()
         except Exception as e:
-            print(f"Error update data: {e}")
-
-    def __del__(self):
-        """Menutup koneksi saat aplikasi mati"""
-        try:
-            self.conn.close()
-        except:
-            pass
+            print(f"Gagal update: {e}")
