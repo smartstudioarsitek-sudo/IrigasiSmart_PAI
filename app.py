@@ -9,8 +9,8 @@ import xml.etree.ElementTree as ET
 import io
 from modules.backend import IrigasiBackend
 
-st.set_page_config(page_title="SIKI - Compliant Version", layout="wide")
-st.title("🌊 SIKI (Sistem Informasi Kinerja Irigasi)")
+st.set_page_config(page_title="Smart-IKSI - Compliant Version", layout="wide")
+st.title("🌊 Smart-IKSI (Sistem Informasi Kinerja Irigasi)")
 st.markdown("✅ **Status Audit:** Compliant Permen PUPR 23/2015 & 12/2015")
 
 if 'backend' not in st.session_state:
@@ -202,3 +202,4 @@ elif menu == "Laporan Resmi":
             app.get_table_data('data_sdm_sarana').to_excel(w, sheet_name='4. SDM & Sarana', index=False)
             app.get_table_data('data_dokumentasi').to_excel(w, sheet_name='5. Dokumentasi', index=False)
         st.download_button("Download File Excel", b, "Laporan_IKSI_Audit.xlsx")
+
