@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 
 class IrigasiBackend:
-    def __init__(self, db_path='database/irigasi.db'):
+    def __init__(self, db_path='database/irigasi_enterprise.db'):
         self.db_folder = os.path.dirname(db_path)
         if self.db_folder and not os.path.exists(self.db_folder):
             try:
@@ -17,148 +17,152 @@ class IrigasiBackend:
         self.init_db()
 
     def init_db(self):
-        # 1. Tabel Master Aset (Data Statis & Valuasi)
+        # 1. TABEL MASTER ASET (DATA STATIS - IMMUTABLE)
+        # Data yang jarang berubah: Nama, Dimensi, Tahun Bangun, Koordinat
         self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS aset_fisik (
+            CREATE TABLE IF NOT EXISTS master_aset (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                kode_aset TEXT, nama_aset TEXT, jenis_aset TEXT, satuan TEXT,
-                
-                -- DATA TEKNIS SIPIL
-                kondisi_sipil REAL DEFAULT 0, -- 0-100
-                nilai_fungsi_sipil REAL DEFAULT 0, -- 0-100
-                
-                -- DATA TEKNIS MEKANIKAL (Pintu/Gearbox)
-                kondisi_me REAL DEFAULT 0, -- 0-100
-                nilai_fungsi_me REAL DEFAULT 0, -- 0-100
-                
-                -- VALUASI EKONOMI (WAJIB UTK DAK)
-                tahun_bangun INTEGER,
-                nilai_aset_baru REAL DEFAULT 0, -- NAB (Rupiah)
-                
-                luas_layanan REAL DEFAULT 0,
-                file_kmz TEXT, detail_teknis TEXT, keterangan TEXT
-            )
-        ''')
-
-        # 2. Tabel Riwayat Penanganan (Rekam Medis Aset)
-        self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS riwayat_penanganan (
-                id INTEGER PRIMARY KEY,
+                kode_aset TEXT UNIQUE, -- 9 Digit Code (Generated)
                 nama_aset TEXT,
-                tahun INTEGER,
-                jenis_kegiatan TEXT, -- Rehab/Pemeliharaan
-                biaya REAL,
-                sumber_dana TEXT -- APBD/DAK/APBN
+                jenis_aset TEXT,
+                satuan TEXT,
+                tahun_bangun INTEGER,
+                dimensi_teknis TEXT, -- JSON: b, h, m, H_mercu
+                luas_layanan_desain REAL, -- Area Potensial
+                file_kmz TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
 
-        # 3. Tabel Non-Fisik (Tetap)
+        # 2. TABEL INSPEKSI BERKALA (DATA DINAMIS - HISTORY)
+        # Data yang berubah tiap survei: Kondisi, Fungsi, Rekomendasi
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS inspeksi_aset (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                aset_id INTEGER,
+                tanggal_inspeksi DATE,
+                nama_surveyor TEXT,
+                
+                -- KONDISI FISIK (0-100)
+                kondisi_sipil REAL, 
+                kondisi_me REAL,
+                
+                -- KINERJA FUNGSI (0-100)
+                nilai_fungsi_sipil REAL, 
+                nilai_fungsi_me REAL,
+                
+                -- ANALISA DAMPAK (Untuk Rumus Prioritas)
+                luas_terdampak_aktual REAL, -- Area Service Affected
+                
+                rekomendasi_penanganan TEXT,
+                estimasi_biaya REAL,
+                
+                FOREIGN KEY(aset_id) REFERENCES master_aset(id)
+            )
+        ''')
+
+        # 3. TABEL DATA PENUNJANG (Tanam, P3A, SDM - Tetap)
         self.cursor.execute('CREATE TABLE IF NOT EXISTS data_tanam (id INTEGER PRIMARY KEY, musim TEXT, luas_rencana REAL, luas_realisasi REAL, debit_andalan REAL, kebutuhan_air REAL, faktor_k REAL, prod_padi REAL, prod_palawija REAL)')
         self.cursor.execute('CREATE TABLE IF NOT EXISTS data_p3a (id INTEGER PRIMARY KEY, nama_p3a TEXT, desa TEXT, status TEXT, keaktifan TEXT, anggota INTEGER)')
         self.cursor.execute('CREATE TABLE IF NOT EXISTS data_sdm_sarana (id INTEGER PRIMARY KEY, jenis TEXT, nama TEXT, kondisi TEXT, ket TEXT)')
         self.cursor.execute('CREATE TABLE IF NOT EXISTS data_dokumentasi (id INTEGER PRIMARY KEY, jenis_dokumen TEXT, ada INTEGER)')
 
-        # Auto-Migration (Tambah Kolom Baru)
-        cek = self.cursor.execute("PRAGMA table_info(aset_fisik)").fetchall()
-        cols = [c[1] for c in cek]
-        new_cols = ['kondisi_sipil', 'kondisi_me', 'nilai_aset_baru', 'tahun_bangun']
-        for nc in new_cols:
-            if nc not in cols: self.cursor.execute(f"ALTER TABLE aset_fisik ADD COLUMN {nc} REAL DEFAULT 0")
         self.conn.commit()
 
-    # --- CRUD ASET (SIPIL + ME + NAB) ---
-    def tambah_aset_lengkap(self, nama, jenis, satuan, sipil_score, me_score, fungsi_sipil, fungsi_me, luas, nab, thn, detail, kmz=None):
+    # --- 1. MANAJEMEN MASTER ASET (CREATE ONCE) ---
+    def tambah_master_aset(self, nama, jenis, satuan, thn, luas, detail, kmz=None):
         try:
+            # Generate Kode Unik Sederhana (Timestamp based for now)
+            kode = f"{jenis[:3].upper()}-{int(datetime.now().timestamp())}"
             kmz_name = kmz.name if kmz else "-"
             detail_json = json.dumps(detail)
             
-            # Cek apakah aset sudah ada? Jika ada, UPDATE. Jika belum, INSERT.
-            cek = self.cursor.execute("SELECT id FROM aset_fisik WHERE nama_aset=?", (nama,)).fetchone()
-            
-            if cek:
-                # Update Existing (Timpa Data Lama)
-                self.cursor.execute('''UPDATE aset_fisik SET 
-                    jenis_aset=?, satuan=?, kondisi_sipil=?, kondisi_me=?, nilai_fungsi_sipil=?, nilai_fungsi_me=?,
-                    luas_layanan=?, nilai_aset_baru=?, tahun_bangun=?, detail_teknis=?, file_kmz=?
-                    WHERE nama_aset=?''', 
-                    (jenis, satuan, sipil_score, me_score, fungsi_sipil, fungsi_me, luas, nab, thn, detail_json, kmz_name, nama))
-            else:
-                # Insert New
-                self.cursor.execute('''INSERT INTO aset_fisik 
-                    (nama_aset, jenis_aset, satuan, kondisi_sipil, kondisi_me, nilai_fungsi_sipil, nilai_fungsi_me,
-                    luas_layanan, nilai_aset_baru, tahun_bangun, detail_teknis, file_kmz)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''', 
-                    (nama, jenis, satuan, sipil_score, me_score, fungsi_sipil, fungsi_me, luas, nab, thn, detail_json, kmz_name))
-            
+            self.cursor.execute('''INSERT INTO master_aset 
+                (kode_aset, nama_aset, jenis_aset, satuan, tahun_bangun, dimensi_teknis, luas_layanan_desain, file_kmz)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)''', 
+                (kode, nama, jenis, satuan, thn, detail_json, luas, kmz_name))
             self.conn.commit()
-            return "✅ Data Aset Tersimpan (Sipil & ME Terpisah)!"
+            return "✅ Master Aset Terdaftar!"
         except Exception as e: return f"❌ Gagal: {e}"
 
-    # --- RIWAYAT PENANGANAN ---
-    def tambah_riwayat(self, nama_aset, thn, keg, biaya, sumber):
+    # --- 2. MANAJEMEN INSPEKSI (UPDATE MANY TIMES) ---
+    def tambah_inspeksi(self, aset_id, surveyor, ks, kme, fs, fme, luas_impact, rek, biaya):
         try:
-            self.cursor.execute("INSERT INTO riwayat_penanganan VALUES (NULL, ?,?,?,?,?)", 
-                (nama_aset, thn, keg, biaya, sumber))
+            tgl = datetime.now().strftime("%Y-%m-%d")
+            self.cursor.execute('''INSERT INTO inspeksi_aset
+                (aset_id, tanggal_inspeksi, nama_surveyor, kondisi_sipil, kondisi_me, nilai_fungsi_sipil, nilai_fungsi_me, luas_terdampak_aktual, rekomendasi_penanganan, estimasi_biaya)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                (aset_id, tgl, surveyor, ks, kme, fs, fme, luas_impact, rek, biaya))
             self.conn.commit()
-            return "✅ Riwayat Tercatat!"
-        except Exception as e: return str(e)
+            return "✅ Laporan Inspeksi Disimpan!"
+        except Exception as e: return f"❌ Gagal: {e}"
 
-    # --- HITUNG PRIORITAS (LOGIKA BARU: SIPIL vs ME) ---
-    def get_prioritas_smart(self):
-        df = pd.read_sql("SELECT * FROM aset_fisik", self.conn)
+    # --- 3. MESIN PRIORITAS (RUMUS MATEMATIS) ---
+    def get_prioritas_matematis(self):
+        # Join Master + Latest Inspection
+        query = '''
+            SELECT m.nama_aset, m.jenis_aset, m.luas_layanan_desain, 
+                   i.kondisi_sipil, i.kondisi_me, i.nilai_fungsi_sipil, i.nilai_fungsi_me, i.luas_terdampak_aktual, i.tanggal_inspeksi
+            FROM master_aset m
+            JOIN inspeksi_aset i ON m.id = i.aset_id
+            ORDER BY i.tanggal_inspeksi DESC
+        '''
+        df = pd.read_sql(query, self.conn)
+        # Drop duplicates to keep only latest inspection per asset
+        df = df.drop_duplicates(subset=['nama_aset'])
+        
         if df.empty: return df
-        
-        def prioritas(row):
-            # 1. Cek Fungsi ME (Pintu Air)
-            if row['nilai_fungsi_me'] < 60 and row['jenis_aset'] in ['Bendung', 'Bangunan Bagi']:
-                return "PRIORITAS 1 (Darurat - Pintu Macet)"
-            
-            # 2. Cek Fungsi Sipil (Tubuh Bendung/Saluran)
-            if row['nilai_fungsi_sipil'] < 60:
-                return "PRIORITAS 2 (Mendesak - Sipil Jebol)"
-            
-            # 3. Cek Kondisi (Fungsi OK, tapi Fisik Rusak)
-            if row['kondisi_me'] < 60: return "PRIORITAS 3 (Rehab Ringan ME)"
-            if row['kondisi_sipil'] < 60: return "PRIORITAS 3 (Rehab Berat Sipil)"
-            
-            return "Pemeliharaan Rutin"
-            
-        df['Rekomendasi'] = df.apply(prioritas, axis=1)
-        return df.sort_values(by=['Rekomendasi', 'luas_layanan'])
 
-    # --- HITUNG IKSI (TETAP SAMA, TAPI AMBIL NILAI MINIMAL SIPIL/ME) ---
-    def hitung_skor_iksi_audit(self):
-        df_fisik = pd.read_sql("SELECT kondisi_sipil, kondisi_me, luas_layanan FROM aset_fisik", self.conn)
-        skor_fisik = 0
-        if not df_fisik.empty:
-            # Nilai Aset = Min(Sipil, ME) -> Karena kalau pintu rusak, bendung gak guna.
-            # Atau rata-rata tertimbang (70% Sipil, 30% ME). Kita pakai Min untuk safety factor.
-            df_fisik['nilai_final'] = df_fisik[['kondisi_sipil', 'kondisi_me']].min(axis=1)
-            total_luas = df_fisik['luas_layanan'].sum()
-            if total_luas > 0:
-                skor_fisik = (df_fisik['nilai_final'] * df_fisik['luas_layanan']).sum() / total_luas
-            else:
-                skor_fisik = df_fisik['nilai_final'].mean()
-        
-        # ... (Sisa logika IKSI Non-Fisik sama persis dengan modul sebelumnya) ...
-        # (Saya persingkat agar muat)
-        skor_tanam = 80 # Placeholder
-        return {"Total IKSI": round(skor_fisik * 0.45 + skor_tanam * 0.15 + 30, 2), "Rincian": {"Fisik": round(skor_fisik,2)}}
+        def hitung_skor_p(row):
+            # Ambil nilai terburuk antara Sipil vs ME (Conservative approach)
+            K = min(row['kondisi_sipil'], row['kondisi_me'])
+            F = min(row['nilai_fungsi_sipil'], row['nilai_fungsi_me'])
+            
+            # Impact Factor (Rasio Luas Terdampak vs Total DI) -> Asumsi Total DI = 5000 Ha (Placeholder)
+            # Semakin besar impact, semakin prioritas
+            A_as = row['luas_terdampak_aktual']
+            
+            # FORMULA PRIORITAS PUPR (Simplifikasi Logika):
+            # Prioritas = (BobotKondisi * K) + (BobotFungsi * F^1.5) * ImpactFactor
+            # Kita balik logikanya: Semakin KECIL nilai K/F, semakin BESAR Prioritasnya (Skor Bahaya)
+            
+            bahaya_fisik = (100 - K) * 0.35
+            bahaya_fungsi = (100 - F) * 1.5 * 0.65 # Fungsi dibobot lebih berat dan eksponensial
+            
+            skor_bahaya = (bahaya_fisik + bahaya_fungsi) * (A_as / 100) # Impact Multiplier
+            
+            return skor_bahaya
 
-    # --- UTILS LAINNYA ---
+        df['Skor_Prioritas'] = df.apply(hitung_skor_p, axis=1)
+        # Urutkan: Skor Bahaya Tertinggi di Atas
+        return df.sort_values(by='Skor_Prioritas', ascending=False)
+
+    # --- 4. DATA GETTERS ---
+    def get_master_aset(self): return pd.read_sql("SELECT * FROM master_aset", self.conn)
+    
+    def get_history_aset(self, aset_id):
+        return pd.read_sql(f"SELECT * FROM inspeksi_aset WHERE aset_id={aset_id} ORDER BY tanggal_inspeksi DESC", self.conn)
+
+    # --- UTILS (Tetap) ---
     def hapus_semua_data(self):
-        for t in ['aset_fisik','data_tanam','data_p3a','data_sdm_sarana','data_dokumentasi','riwayat_penanganan']:
+        for t in ['master_aset', 'inspeksi_aset', 'data_tanam', 'data_p3a', 'data_sdm_sarana', 'data_dokumentasi']:
             self.cursor.execute(f"DELETE FROM {t}"); self.cursor.execute(f"DELETE FROM sqlite_sequence WHERE name='{t}'")
         self.conn.commit(); return "✅ Bersih"
-    def get_data(self): return pd.read_sql("SELECT * FROM aset_fisik", self.conn)
-    def get_riwayat(self): return pd.read_sql("SELECT * FROM riwayat_penanganan ORDER BY tahun DESC", self.conn)
+        
+    def tambah_data_tanam_lengkap(self, m, lr, lrl, qa, qb, pd, pl):
+        fk = qa/qb if qb>0 else 0
+        self.cursor.execute("INSERT INTO data_tanam VALUES (NULL,?,?,?,?,?,?,?,?)", (m,lr,lrl,qa,qb,round(fk,2),pd,pl))
+        self.conn.commit(); return "✅ Tersimpan"
+        
+    def tambah_data_p3a(self, nm, ds, st, akt, ang):
+        self.cursor.execute("INSERT INTO data_p3a VALUES (NULL, ?,?,?,?,?)", (nm, ds, st, akt, ang)); self.conn.commit(); return "✅ OK"
+        
+    def tambah_sdm_sarana(self, jns, nm, cond, ket):
+        self.cursor.execute("INSERT INTO data_sdm_sarana VALUES (NULL, ?,?,?,?)", (jns, nm, cond, ket)); self.conn.commit(); return "✅ OK"
+        
+    def update_dokumentasi(self, d):
+        self.cursor.execute("DELETE FROM data_dokumentasi")
+        for k,v in d.items(): self.cursor.execute("INSERT INTO data_dokumentasi VALUES (?,?)", (k, 1 if v else 0))
+        self.conn.commit(); return "✅ OK"
+    
     def get_table_data(self, t): return pd.read_sql(f"SELECT * FROM {t}", self.conn)
-    def export_ke_json(self): return pd.read_sql("SELECT * FROM aset_fisik", self.conn).to_json(orient='records')
-    def import_dari_json(self, f):
-        try:
-            df = pd.read_json(f); self.cursor.execute("DELETE FROM aset_fisik")
-            df.to_sql('aset_fisik', self.conn, if_exists='append', index=False); self.conn.commit()
-            return "✅ OK"
-        except Exception as e: return str(e)
-    def update_data(self, df):
-        self.cursor.execute("DELETE FROM aset_fisik"); df.to_sql('aset_fisik', self.conn, if_exists='append', index=False); self.conn.commit()
