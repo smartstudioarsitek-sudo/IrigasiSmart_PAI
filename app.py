@@ -9,8 +9,8 @@ import xml.etree.ElementTree as ET
 import io
 from modules.backend import IrigasiBackend
 
-st.set_page_config(page_title="SIKI - Enterprise", layout="wide")
-st.title("🌊 SIKI (Sistem Manajemen Aset Irigasi)")
+st.set_page_config(page_title="SMART-PAI - Enterprise", layout="wide")
+st.title("🌊 SMART-PAI (Profil Aset Irigas)")
 st.markdown("✅ **Status:** Enterprise Ready (Master Data + Inspeksi Berkala)")
 
 if 'backend' not in st.session_state:
@@ -216,4 +216,5 @@ elif menu == "4. Laporan & Prioritas":
             app.get_master_aset().to_excel(writer, sheet_name='Master Data', index=False)
             
         st.download_button("Download Laporan Siap Cetak", buffer, "Laporan_Resmi_SIKI.xlsx")
+
 
