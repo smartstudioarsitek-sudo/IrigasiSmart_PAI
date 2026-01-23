@@ -9,15 +9,15 @@ import xml.etree.ElementTree as ET
 import io
 from modules.backend import IrigasiBackend
 
-st.set_page_config(page_title="Smart_IKSI - Standar Permen 23/2015", layout="wide")
-st.title("🌊 Smart_IKSI (Informasi Kinerja Sistem Irigasi)")
-st.caption("✅ Compliant with Permen PUPR 23/2015 | Feeder System for EPAKSI")
+st.set_page_config(page_title="SIKI - Compliant Version", layout="wide")
+st.title("🌊 SIKI (Sistem Informasi Kinerja Irigasi)")
+st.markdown("✅ **Status Audit:** Compliant Permen PUPR 23/2015 & 12/2015")
 
 if 'backend' not in st.session_state:
     st.session_state.backend = IrigasiBackend()
 app = st.session_state.backend
 
-# --- FUNGSI BANTUAN (TETAP) ---
+# --- FUNGSI PETA & GAMBAR (TETAP) ---
 def parse_kml_to_map(kml_file):
     m = folium.Map([-4.5, 103.0], zoom_start=12)
     try:
@@ -37,8 +37,8 @@ def parse_kml_to_map(kml_file):
                     elif geom=='LineString': folium.PolyLine(coords, color="red", weight=4, popup=name).add_to(m)
                     elif geom=='Point': folium.Marker(coords[0], popup=name).add_to(m)
                     count += 1
-        return m, f"Loaded {count} assets."
-    except: return m, "Error reading KML"
+        return m, f"Loaded {count} items."
+    except: return m, "Error KML"
 
 def gambar_sketsa(jenis, params):
     fig, ax = plt.subplots(figsize=(6, 3)); ax.set_axis_off()
@@ -58,130 +58,127 @@ def gambar_sketsa(jenis, params):
     return fig
 
 # --- SIDEBAR ---
-with st.sidebar.expander("🛠️ Teknisi"):
+with st.sidebar.expander("🛠️ Maintenance"):
     if st.button("⚠️ RESET DATA"): st.success(app.hapus_semua_data()); st.rerun()
     st.download_button("⬇️ Backup JSON", app.export_ke_json(), "backup.json")
     up = st.file_uploader("⬆️ Restore JSON")
     if up and st.button("Restore"): st.success(app.import_dari_json(up)); st.rerun()
 
-menu = st.sidebar.radio("Navigasi", ["Dashboard IKSI", "Input Aset Fisik", "Input Non-Fisik", "Peta GIS", "Laporan"])
+menu = st.sidebar.radio("Navigasi", ["Dashboard IKSI", "Input Aset Fisik", "Input Non-Fisik", "Peta GIS", "Laporan Resmi"])
 
-# --- DASHBOARD IKSI LENGKAP ---
+# --- DASHBOARD AUDIT ---
 if menu == "Dashboard IKSI":
-    st.header("🏁 Dashboard Kinerja Sistem Irigasi (IKSI)")
+    st.header("🏁 Kinerja Sistem Irigasi (Audit Mode)")
     
-    # Hitung Skor IKSI Real-time
-    data_iksi = app.hitung_skor_iksi_lengkap()
-    total = data_iksi['Total IKSI']
+    data = app.hitung_skor_iksi_audit()
+    total = data['Total IKSI']
     
-    # Tentukan Warna Kinerja
-    warna = "red"
-    label = "BURUK (Perlu Perhatian Khusus)"
-    if total >= 80: warna, label = "green", "BAIK SEKALI"
-    elif total >= 70: warna, label = "green", "BAIK"
-    elif total >= 55: warna, label = "orange", "KURANG / SEDANG"
+    # Kategori Permen 12/2015
+    if total >= 80: lbl, warna = "BAIK SEKALI (Layak DAK)", "green"
+    elif total >= 70: lbl, warna = "BAIK", "green"
+    elif total >= 55: lbl, warna = "KURANG (Perlu Rehab)", "orange"
+    else: lbl, warna = "JELEK (Rusak Berat)", "red"
     
-    col_utama, col_detail = st.columns([1, 2])
-    
-    with col_utama:
-        st.metric("SKOR IKSI FINAL", f"{total}", delta=label)
+    col_main, col_break = st.columns([1,2])
+    with col_main:
+        st.metric("IKSI GABUNGAN", f"{total}", delta=lbl)
         st.progress(total/100)
-        st.info("Nilai ini adalah gabungan dari 6 Aspek sesuai Permen 23/2015.")
-        
-    with col_detail:
-        st.subheader("Rincian 6 Pilar IKSI")
-        rincian = data_iksi['Rincian']
-        # Tampilkan Progress Bar Tiap Aspek
-        c1, c2 = st.columns(2)
+    
+    with col_break:
+        st.subheader("Rincian 6 Pilar (Weighted)")
+        r = data['Rincian']
+        c1,c2 = st.columns(2)
         with c1:
-            st.write(f"**Prasarana Fisik** (Bobot 45%): {rincian['Prasarana Fisik (45%)']}")
-            st.progress(rincian['Prasarana Fisik (45%)']/100)
-            st.write(f"**Produktivitas Tanam** (15%): {rincian['Produktivitas Tanam (15%)']}")
-            st.progress(rincian['Produktivitas Tanam (15%)']/100)
-            st.write(f"**Sarana Penunjang** (10%): {rincian['Sarana Penunjang (10%)']}")
-            st.progress(rincian['Sarana Penunjang (10%)']/100)
+            st.metric("1. Fisik (45%)", r['Fisik (45%)'])
+            st.metric("2. Tanam (15%)", r['Tanam (15%)'])
+            st.metric("3. Sarana (10%)", r['Sarana (10%)'])
         with c2:
-            st.write(f"**Organisasi Personalia** (15%): {rincian['Organisasi Personalia (15%)']}")
-            st.progress(rincian['Organisasi Personalia (15%)']/100)
-            st.write(f"**Dokumentasi** (5%): {rincian['Dokumentasi (5%)']}")
-            st.progress(rincian['Dokumentasi (5%)']/100)
-            st.write(f"**Kelembagaan P3A** (10%): {rincian['Kelembagaan P3A (10%)']}")
-            st.progress(rincian['Kelembagaan P3A (10%)']/100)
+            st.metric("4. SDM (15%)", r['SDM (15%)'])
+            st.metric("5. Dokumen (5%)", r['Dokumen (5%)'])
+            st.metric("6. P3A (10%)", r['P3A (10%)'])
 
-# --- INPUT ASET FISIK (DENGAN LUAS LAYANAN) ---
+# --- INPUT FISIK ---
 elif menu == "Input Aset Fisik":
-    st.header("📝 Input Prasarana Fisik")
-    t1, t2 = st.tabs(["Formulir", "Tabel Data"])
+    st.header("1. Inventarisasi Aset (Bobot 45%)")
+    t1, t2 = st.tabs(["Formulir", "Tabel"])
     with t1:
         c1, c2 = st.columns(2)
         with c1:
             jenis = st.selectbox("Jenis", ["Saluran (Primer/Sekunder)", "Bendung", "Bangunan Bagi", "Lainnya"])
             nama = st.text_input("Nama Aset")
-            # --- UPDATE: KOLOM LUAS LAYANAN (KRITIKAL UNTUK REGULASI) ---
-            luas_layanan = st.number_input("Luas Layanan (Ha)", min_value=0.0, help="Penting untuk pembobotan skor kinerja!")
-            # ------------------------------------------------------------
-            peta = st.file_uploader("Upload KMZ", type=['kml','kmz'])
-            
+            luas = st.number_input("Luas Layanan (Ha)", 0.0, help="Wajib diisi untuk pembobotan!")
+            peta = st.file_uploader("Upload KMZ", type=['kmz','kml'])
             detail = {}
             if "Saluran" in jenis:
-                b = st.number_input("Lebar (b)", 0.0, step=0.05)
-                h = st.number_input("Tinggi (h)", 0.0, step=0.05)
-                m = st.number_input("Miring (m)", 0.0, step=0.05)
-                detail = {"b":b, "h":h, "m":m, "tipe_lining":st.selectbox("Lining", ["Tanah","Beton"])}
-                sat = "m"
+                b=st.number_input("b",0.0,step=0.1); h=st.number_input("h",0.0,step=0.1); m=st.number_input("m",0.0,step=0.1)
+                detail={'b':b,'h':h,'m':m,'tipe_lining':st.selectbox("Lining",["Tanah","Beton"])}
+                sat="m"
             elif "Bendung" in jenis:
-                H = st.number_input("Tinggi Mercu", 0.0, step=0.05)
-                detail = {"tinggi_mercu":H}
-                sat = "bh"
-            else: sat = "unit"
-
+                H=st.number_input("H Mercu",2.0,step=0.1)
+                detail={'tinggi_mercu':H}
+                sat="bh"
+            else: sat="unit"
         with c2:
             st.pyplot(gambar_sketsa(jenis, detail))
-            st.divider()
-            cb = st.number_input("Volume Baik", 0.0)
-            crr = st.number_input("Volume RR", 0.0)
-            crb = st.number_input("Volume RB", 0.0)
-            
-            if st.button("Simpan Data"):
-                msg = app.tambah_data_kompleks(nama, jenis, sat, cb, crr, crb, luas_layanan, detail, peta)
-                st.success(msg)
-
+            cb = st.number_input("Kondisi Baik", 0.0); crr = st.number_input("Kondisi RR", 0.0); crb = st.number_input("Kondisi RB", 0.0)
+            if st.button("Simpan Aset"): st.success(app.tambah_data_kompleks(nama, jenis, sat, cb, crr, crb, luas, detail, peta))
     with t2:
-        df = app.get_data()
-        ed = st.data_editor(df, hide_index=True, use_container_width=True)
-        if st.button("Update Tabel"): app.update_data(ed); st.rerun()
+        ed = st.data_editor(app.get_data(), hide_index=True, use_container_width=True)
+        if st.button("Update"): app.update_data(ed); st.rerun()
 
-# --- INPUT NON FISIK ---
+# --- INPUT NON FISIK (REVISI BESAR) ---
 elif menu == "Input Non-Fisik":
-    st.header("📋 Data Penunjang (5 Pilar Lainnya)")
-    t_tanam, t_p3a, t_sdm = st.tabs(["Tanam", "P3A", "SDM"])
+    st.header("Data Penunjang (Bobot 55%)")
+    t_tanam, t_p3a, t_sdm, t_dok = st.tabs(["2. Tanam & Air (15%)", "3. P3A (10%)", "4. SDM & Sarana (25%)", "5. Dokumentasi (5%)"])
     
     with t_tanam:
-        with st.form("ft"):
+        st.info("Input Data Tanam per Musim (Wajib Isi Debit untuk Faktor K)")
+        with st.form("tanam"):
             c1,c2 = st.columns(2)
-            musim = c1.selectbox("Musim", ["MT-1", "MT-2", "MT-3"])
-            luas = c2.number_input("Rencana (Ha)", 0.0)
-            real = c2.number_input("Realisasi (Ha)", 0.0)
+            mt = c1.selectbox("Musim", ["MT-1", "MT-2", "MT-3"])
+            lr = c1.number_input("Rencana Luas (Ha)", 0.0)
+            lrl = c1.number_input("Realisasi Luas (Ha)", 0.0)
+            q_and = c2.number_input("Debit Andalan (L/dt)", 0.0, help="Ketersediaan Air di Bendung")
+            q_but = c2.number_input("Kebutuhan Air (L/dt)", 0.0, help="Kebutuhan Air di Sawah")
             padi = c1.number_input("Prod Padi (Ton/Ha)", 0.0)
             pala = c1.number_input("Prod Palawija (Ton/Ha)", 0.0)
-            if st.form_submit_button("Simpan"): st.success(app.tambah_data_tanam(musim, luas, real, padi, pala))
+            if st.form_submit_button("Simpan Data Tanam"):
+                st.success(app.tambah_data_tanam_lengkap(mt, lr, lrl, q_and, q_but, padi, pala))
         st.dataframe(app.get_table_data('data_tanam'))
 
     with t_p3a:
-        with st.form("fp"):
-            nm = st.text_input("Nama P3A"); ds = st.text_input("Desa")
-            stt = st.selectbox("Badan Hukum", ["Sudah", "Belum"])
-            akt = st.selectbox("Keaktifan", ["Aktif", "Sedang", "Kurang"])
-            ang = st.number_input("Anggota", 0)
-            if st.form_submit_button("Simpan"): st.success(app.tambah_data_p3a(nm, ds, stt, akt, ang))
+        with st.form("p3a"):
+            nm=st.text_input("Nama"); ds=st.text_input("Desa")
+            stt=st.selectbox("Badan Hukum", ["Sudah", "Belum"]); akt=st.selectbox("Keaktifan", ["Aktif", "Sedang", "Kurang"])
+            ang=st.number_input("Anggota",0)
+            if st.form_submit_button("Simpan P3A"): st.success(app.tambah_data_p3a(nm, ds, stt, akt, ang))
         st.dataframe(app.get_table_data('data_p3a'))
 
     with t_sdm:
-        with st.form("fs"):
-            jns = st.selectbox("Jenis", ["Personil", "Sarana Kantor", "Alat"])
-            nm = st.text_input("Nama Item"); cond = st.text_input("Kondisi/Jabatan")
-            if st.form_submit_button("Simpan"): st.success(app.tambah_sdm_sarana(jns, nm, cond, "-"))
+        st.write("Input Personil & Sarana Kantor")
+        with st.form("sdm"):
+            jns=st.selectbox("Jenis", ["Personil", "Sarana Kantor", "Alat", "Transportasi"])
+            nm=st.text_input("Nama Item"); cond=st.text_input("Kondisi/Jabatan")
+            if st.form_submit_button("Simpan SDM/Sarana"): st.success(app.tambah_sdm_sarana(jns, nm, cond, "-"))
         st.dataframe(app.get_table_data('data_sdm_sarana'))
+
+    with t_dok:
+        st.write("Checklist Kelengkapan Dokumen (Bobot 5%)")
+        dok_list = ["Peta Daerah Irigasi", "Skema Jaringan", "Skema Bangunan", "Buku Data DI", "Manual O&P", "Gambar Purna Laksana (As-Built)"]
+        
+        # Ambil data existing
+        df_dok = app.get_table_data('data_dokumentasi')
+        existing = {}
+        if not df_dok.empty:
+            existing = dict(zip(df_dok['jenis_dokumen'], df_dok['ada']))
+        
+        new_status = {}
+        for item in dok_list:
+            checked = st.checkbox(item, value=bool(existing.get(item, 0)))
+            new_status[item] = checked
+            
+        if st.button("Update Status Dokumen"):
+            st.success(app.update_dokumentasi(new_status))
 
 # --- PETA GIS ---
 elif menu == "Peta GIS":
@@ -194,15 +191,14 @@ elif menu == "Peta GIS":
     else: st_folium(folium.Map([-4.5, 103], zoom_start=10), width=1000)
 
 # --- LAPORAN ---
-elif menu == "Laporan":
-    st.header("📄 Export Laporan")
-    if st.button("Download Excel (Format Raw)"):
+elif menu == "Laporan Resmi":
+    st.header("📄 Export Laporan (Format Database)")
+    if st.button("Download Excel Lengkap"):
         b = io.BytesIO()
         with pd.ExcelWriter(b, engine='xlsxwriter') as w:
-            app.get_data().to_excel(w, sheet_name='Fisik', index=False)
-            app.get_table_data('data_tanam').to_excel(w, sheet_name='Tanam', index=False)
-            app.get_table_data('data_p3a').to_excel(w, sheet_name='P3A', index=False)
-            app.get_table_data('data_sdm_sarana').to_excel(w, sheet_name='SDM', index=False)
-        st.download_button("Download", b, "Laporan_SIKI.xlsx")
-
-
+            app.get_data().to_excel(w, sheet_name='1. Aset Fisik', index=False)
+            app.get_table_data('data_tanam').to_excel(w, sheet_name='2. Tanam & Hidrologi', index=False)
+            app.get_table_data('data_p3a').to_excel(w, sheet_name='3. Kelembagaan P3A', index=False)
+            app.get_table_data('data_sdm_sarana').to_excel(w, sheet_name='4. SDM & Sarana', index=False)
+            app.get_table_data('data_dokumentasi').to_excel(w, sheet_name='5. Dokumentasi', index=False)
+        st.download_button("Download File Excel", b, "Laporan_IKSI_Audit.xlsx")
