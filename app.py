@@ -9,8 +9,8 @@ import xml.etree.ElementTree as ET
 import io
 from modules.backend import IrigasiBackend
 
-st.set_page_config(page_title="SIKI - Enterprise", layout="wide")
-st.title("🌊 SIKI (Sistem Manajemen Aset Irigasi)")
+st.set_page_config(page_title="Smart-PAI - Enterprise", layout="wide")
+st.title("🌊 Smart-PAI (Profil Aset Irigas)")
 st.markdown("**Status:** ✅ Compliant Permen PUPR 23/2015 (Pemisahan Data Statis & Dinamis)")
 
 if 'backend' not in st.session_state:
@@ -177,3 +177,4 @@ elif menu == "4. Analisa Prioritas":
             st.download_button("Download Excel", b, "Laporan_Prioritas_Enterprise.xlsx")
     else:
         st.warning("Belum ada data inspeksi untuk dianalisa.")
+
