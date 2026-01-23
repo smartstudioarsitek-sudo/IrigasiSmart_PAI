@@ -57,29 +57,95 @@ if menu == "Dashboard":
         st.dataframe(df_p[['nama_aset', 'Kelas_Prioritas', 'Skor_Prioritas', 'estimasi_biaya']].head(5), use_container_width=True)
     else: st.info("Belum ada data inspeksi.")
 
-# --- 1. MASTER ASET ---
-elif menu == "1. Master Aset (Statis)":
-    st.header("🗃️ Pendaftaran Aset Baru")
-    st.info("Input sekali seumur hidup aset. Wajib isi NAB & Tahun Rehab.")
+# --- 3. NON FISIK (LENGKAP) ---
+elif menu == "3. Non-Fisik":
+    st.header("Data Penunjang IKSI")
+    st.info("Input data organisasi, teknis, dan dokumentasi sesuai Permen PUPR.")
     
-    t1, t2 = st.tabs(["Formulir", "Database"])
-    with t1:
-        c1, c2 = st.columns(2)
-        with c1:
-            nm = st.text_input("Nama Aset"); jn = st.selectbox("Jenis", ["Saluran", "Bendung", "Bangunan Bagi"])
-            tb = st.number_input("Tahun Bangun", 1980, 2025, 2000)
-            tr = st.number_input("Tahun Rehab Terakhir", 1980, 2025, 2000, help="Penting untuk analisa umur aset")
-        with c2:
-            ls = st.number_input("Luas Layanan Desain (Ha)", 0.0)
-            nab = st.number_input("Nilai Aset Baru / NAB (Rp)", 0.0, step=1000000.0, help="Biaya bangun ulang sekarang")
-            # Detail Teknis Sederhana
-            if "Saluran" in jn: det = {'b': st.number_input("b"), 'h': st.number_input("h")}
-            else: det = {'H_mercu': st.number_input("H Mercu")}
+    # Buat 4 Tab
+    t_tanam, t_p3a, t_sdm, t_dok = st.tabs(["1. Tanam & Air", "2. P3A", "3. SDM & Sarana", "4. Dokumentasi"])
+    
+    # --- TAB 1: TANAM ---
+    with t_tanam:
+        st.write("#### Produktivitas & Ketersediaan Air")
+        with st.form("ft"):
+            c1,c2 = st.columns(2)
+            mt = c1.selectbox("Musim Tanam", ["MT-1 (Rendeng)", "MT-2 (Gadu I)", "MT-3 (Gadu II)"])
+            lr = c1.number_input("Luas Rencana (Ha)", 0.0)
+            lrl = c1.number_input("Luas Realisasi (Ha)", 0.0)
             
-        if st.button("Simpan Master"):
-            st.success(app.tambah_master_aset(nm, jn, "unit", tb, tr, ls, nab, det))
+            # Data Hidrologi untuk Faktor K
+            qa = c2.number_input("Debit Andalan (L/detik)", 0.0, help="Debit tersedia di bendung")
+            qb = c2.number_input("Kebutuhan Air (L/detik)", 0.0, help="Kebutuhan air di sawah")
             
-    with t2: st.dataframe(app.get_master_aset())
+            padi = c1.number_input("Prod. Padi (Ton/Ha)", 0.0)
+            palawija = c1.number_input("Prod. Palawija (Ton/Ha)", 0.0)
+            
+            if st.form_submit_button("Simpan Data Tanam"):
+                st.success(app.tambah_data_tanam_lengkap(mt, lr, lrl, qa, qb, padi, palawija))
+        
+        st.caption("Riwayat Data Tanam:")
+        st.dataframe(app.get_table_data('data_tanam'), use_container_width=True)
+
+    # --- TAB 2: P3A ---
+    with t_p3a:
+        st.write("#### Kelembagaan Petani (GP3A/IP3A)")
+        with st.form("fp"):
+            c1, c2 = st.columns(2)
+            nm = c1.text_input("Nama P3A")
+            ds = c1.text_input("Desa/Wilayah")
+            stt = c2.selectbox("Status Badan Hukum", ["Sudah Berbadan Hukum", "Belum", "Proses"])
+            akt = c2.selectbox("Keaktifan", ["Aktif", "Sedang", "Kurang/Macet"])
+            ang = c1.number_input("Jumlah Anggota", 0, step=1)
+            
+            if st.form_submit_button("Simpan P3A"):
+                st.success(app.tambah_data_p3a(nm, ds, stt, akt, ang))
+        
+        st.caption("Database P3A:")
+        st.dataframe(app.get_table_data('data_p3a'), use_container_width=True)
+
+    # --- TAB 3: SDM & SARANA ---
+    with t_sdm:
+        st.write("#### Personil & Peralatan Kantor")
+        with st.form("fs"):
+            c1, c2 = st.columns(2)
+            jns = c1.selectbox("Jenis Data", ["Personil (Juru/Pengamat)", "Sarana Kantor", "Alat Transportasi", "Alat Berat"])
+            nm = c1.text_input("Nama Item / Nama Personil")
+            cond = c2.text_input("Kondisi / Jabatan", placeholder="Contoh: Baik / Juru Air")
+            ket = c2.text_input("Keterangan")
+            
+            if st.form_submit_button("Simpan SDM/Sarana"):
+                st.success(app.tambah_sdm_sarana(jns, nm, cond, ket))
+        
+        st.caption("Inventaris SDM & Sarana:")
+        st.dataframe(app.get_table_data('data_sdm_sarana'), use_container_width=True)
+
+    # --- TAB 4: DOKUMENTASI ---
+    with t_dok:
+        st.write("#### Checklist Kelengkapan Dokumen")
+        st.info("Centang dokumen yang tersedia di kantor pengamat/UPTD.")
+        
+        dok_list = ["Peta Daerah Irigasi", "Skema Jaringan", "Skema Bangunan", "Buku Data DI", "Manual O&P", "Gambar Purna Laksana (As-Built)"]
+        
+        # Ambil data existing dari database
+        df_dok = app.get_table_data('data_dokumentasi')
+        existing = {}
+        if not df_dok.empty:
+            existing = dict(zip(df_dok['jenis_dokumen'], df_dok['ada']))
+        
+        # Buat Form Checklist
+        new_status = {}
+        col_d1, col_d2 = st.columns(2)
+        
+        for i, item in enumerate(dok_list):
+            # Bagi dua kolom biar rapi
+            col = col_d1 if i < 3 else col_d2
+            is_checked = bool(existing.get(item, 0))
+            new_status[item] = col.checkbox(item, value=is_checked)
+            
+        st.write("")
+        if st.button("💾 Update Status Dokumentasi"):
+            st.success(app.update_dokumentasi(new_status))
 
 # --- 2. INSPEKSI ---
 elif menu == "2. Inspeksi (Dinamis)":
@@ -150,3 +216,4 @@ elif menu == "4. Laporan & Prioritas":
             app.get_master_aset().to_excel(writer, sheet_name='Master Data', index=False)
             
         st.download_button("Download Laporan Siap Cetak", buffer, "Laporan_Resmi_SIKI.xlsx")
+
